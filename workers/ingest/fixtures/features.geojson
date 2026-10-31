@@ -1,0 +1,7 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "id": "fixture:depth", "geometry": { "type": "Polygon", "coordinates": [[[-81.81,24.55],[-81.79,24.55],[-81.79,24.57],[-81.81,24.57],[-81.81,24.55]], [[-81.803,24.558],[-81.803,24.562],[-81.797,24.562],[-81.797,24.558],[-81.803,24.558]]] }, "properties": { "sourceId": "synthetic", "objectClass": "DEPARE", "DRVAL1": 3, "DRVAL2": 6, "verticalDatum": "SYNTHETIC-MLLW", "CATZOC": "unknown" } },
+    { "type": "Feature", "id": "fixture:rock", "geometry": { "type": "Point", "coordinates": [-81.8,24.56] }, "properties": { "sourceId": "synthetic", "objectClass": "UWTROC", "VALSOU": 0.4 } }
+  ]
+}

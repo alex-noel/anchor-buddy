@@ -1,0 +1,17 @@
+{
+  "name": "@anchor-buddy/anchor-watch",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*",
+    "react-native": "*"
+  }
+}

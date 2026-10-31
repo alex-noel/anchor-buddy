@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Anchor Buddy",
+    "slug": "anchor-buddy",
+    "scheme": "anchorbuddy",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "light",
+    "ios": { "bundleIdentifier": "app.anchorbuddy.mobile", "supportsTablet": true },
+    "android": { "package": "app.anchorbuddy.mobile" },
+    "web": { "bundler": "metro", "name": "Anchor Buddy" },
+    "plugins": [
+      "@maplibre/maplibre-react-native",
+      "expo-sqlite",
+      "expo-secure-store",
+      "../../modules/anchor-watch/app.plugin.js"
+    ]
+  }
+}

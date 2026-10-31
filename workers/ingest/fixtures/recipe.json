@@ -1,0 +1,9 @@
+{
+  "regionId": "florida-keys-fixture",
+  "version": "test-v1",
+  "synthetic": true,
+  "bounds": [-81.82,24.54,-81.78,24.58],
+  "validUntil": "2099-01-01T00:00:00Z",
+  "featureFiles": ["features.geojson"],
+  "provenance": [{ "id": "synthetic", "url": "https://example.invalid/anchorbuddy-fixture", "retrievedAt": "2026-10-30T00:00:00Z", "attribution": "Invented integration fixture — not nautical data" }]
+}

@@ -1,0 +1,44 @@
+services:
+  database:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: anchorbuddy
+      POSTGRES_USER: anchorbuddy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./001-schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anchorbuddy -d anchorbuddy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    ports: ["3001:3001"]
+    environment:
+      PACK_ROOT: /data/packs
+      NWS_USER_AGENT: ${NWS_USER_AGENT:-Anchor Buddy-development}
+    volumes: ["packs:/data/packs:ro"]
+    depends_on:
+      database: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  ingest:
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.ingest
+    environment:
+      DATABASE_URL: postgresql://anchorbuddy:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment}@database:5432/anchorbuddy
+    volumes:
+      - packs:/data/packs
+      - ./incoming:/data/incoming:ro
+volumes:
+  postgres:
+  packs:

@@ -1,0 +1,28 @@
+{
+  "name": "anchor-buddy",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "modules/*"
+  ],
+  "scripts": {
+    "start": "npm run start --workspace=@anchor-buddy/mobile",
+    "web": "npm run web --workspace=@anchor-buddy/mobile",
+    "api": "npm run dev --workspace=@anchor-buddy/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:ingest": "PYTHONPATH=workers/ingest python3 -m unittest discover -s workers/ingest/tests -v",
+    "check": "npm run typecheck && npm test && npm run test:ingest"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

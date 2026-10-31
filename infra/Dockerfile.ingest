@@ -1,0 +1,7 @@
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.11.4
+RUN apt-get update && apt-get install -y --no-install-recommends python3-psycopg && rm -rf /var/lib/apt/lists/*
+WORKDIR /app/workers/ingest
+COPY workers/ingest/ ./
+ENV PYTHONPATH=/app/workers/ingest
+ENTRYPOINT ["python3", "-m", "anchor_ingest"]
+CMD ["--help"]
