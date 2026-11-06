@@ -18,6 +18,11 @@ import { PROVIDERS } from './providers/contracts.js';
 import { GovernmentHttp, ProviderError } from './providers/http.js';
 import { NwsProvider } from './providers/nws.js';
 import { CoopsProvider, type StationMapping } from './providers/coops.js';
+import { createLiveServices } from './providers/live-factory.js';
+import { DiscoveryService, DISCOVERY_CAPABILITIES } from './providers/discovery.js';
+import { NominatimProvider } from './providers/geocode.js';
+import { OpenFreeMapProxy } from './providers/map-proxy.js';
+import { PROJECT_USER_AGENT } from './providers/live-types.js';
 
 export interface AppOptions {
   packStore?: PackStore;
@@ -26,6 +31,9 @@ export interface AppOptions {
   weather?: NwsProvider;
   tide?: CoopsProvider;
   stationMappings?: StationMapping[];
+  discovery?: DiscoveryService;
+  geocoder?: NominatimProvider;
+  mapFetch?: typeof fetch;
 }
 interface SearchBody {
   regionId: string;
@@ -85,7 +93,7 @@ export function createApp(options: AppOptions = {}) {
   });
   const store = options.packStore ?? new FilePackStore(process.env.PACK_ROOT ?? './data/packs');
   const now = options.now ?? (() => new Date());
-  const userAgent = process.env.NWS_USER_AGENT ?? 'Anchor Buddy-development';
+  const userAgent = process.env.NWS_USER_AGENT ?? PROJECT_USER_AGENT;
   const weather =
     options.weather ??
     new NwsProvider(
@@ -102,6 +110,10 @@ export function createApp(options: AppOptions = {}) {
       }),
       options.stationMappings,
     );
+  const live = createLiveServices(weather, now);
+  const discovery = options.discovery ?? live.discovery;
+  const geocoder = options.geocoder ?? live.geocoder;
+  const mapProxy = new OpenFreeMapProxy(options.mapFetch);
   const allowedOrigins = new Set(
     (
       process.env.CORS_ALLOWED_ORIGINS ??
@@ -141,6 +153,8 @@ export function createApp(options: AppOptions = {}) {
   app.options('/*', async (_request, reply) => reply.code(204).send());
 
   async function pack(regionId: string, version?: string): Promise<RegionPack> {
+    const livePack = discovery.get(regionId, version);
+    if (livePack) return livePack;
     const value =
       regionId === DEMO_ID ? createDemoPack(now()) : await store.assessment(regionId, version);
     const errors = validateRegionPack(value);
@@ -173,7 +187,13 @@ export function createApp(options: AppOptions = {}) {
       return reply.code(error.status).send({ error: error.code, message: error.message });
     if (error instanceof ProviderError)
       return reply
-        .code(error.code === 'RATE_LIMITED' ? 429 : 502)
+        .code(
+          error.status === 400
+            ? 400
+            : error.status === 429 || error.code === 'RATE_LIMITED'
+              ? 429
+              : 502,
+        )
         .send({ error: error.code, message: error.message });
     const known = error as { statusCode?: number };
     if (known.statusCode && known.statusCode >= 400 && known.statusCode < 500)
@@ -181,21 +201,21 @@ export function createApp(options: AppOptions = {}) {
         .code(known.statusCode)
         .send({ error: 'INVALID_REQUEST', message: 'Request does not match the API contract' });
     app.log.error({ err: error }, 'Request failed');
-    return reply
-      .code(500)
-      .send({
-        error: 'INTERNAL_ERROR',
-        message: 'Request could not be completed; no assessment was produced',
-      });
+    return reply.code(500).send({
+      error: 'INTERNAL_ERROR',
+      message: 'Request could not be completed; no assessment was produced',
+    });
   });
   app.get('/health', async () => ({
     status: 'ok',
     service: 'anchorbuddy-api',
     assistant: 'partner-access-pending',
     nauticalRelease: 'review-required',
+    liveDiscovery: DISCOVERY_CAPABILITIES,
   }));
   app.get('/v1/providers', async () => ({ providers: PROVIDERS }));
   app.get('/v1/regions', async () => ({
+    discovery: DISCOVERY_CAPABILITIES,
     regions: [
       {
         id: DEMO_ID,
@@ -207,6 +227,23 @@ export function createApp(options: AppOptions = {}) {
       ...(await store.regions()),
     ],
   }));
+  app.post<{ Body: unknown }>('/v1/regions/discover', async (request, reply) =>
+    reply.header('Cache-Control', 'no-store').send(await discovery.discover(request.body)),
+  );
+  app.get<{ Querystring: { q?: string } }>('/v1/geocode', async (request, reply) => {
+    if (typeof request.query.q !== 'string')
+      return reply
+        .code(400)
+        .send({ error: 'INVALID_QUERY', message: 'Submit a place name using q' });
+    return geocoder.search(request.query.q);
+  });
+  app.get<{ Querystring: { url?: string } }>('/v1/maps/resource', async (request, reply) => {
+    const resource = await mapProxy.resource(request.query.url);
+    return reply
+      .header('Content-Type', resource.contentType)
+      .header('Cache-Control', resource.cacheControl)
+      .send(resource.bytes);
+  });
   app.get('/v1/demo', async () => ({
     pack: createDemoPack(now()),
     vessel: DEFAULT_VESSEL,
@@ -300,15 +337,13 @@ export function createApp(options: AppOptions = {}) {
     },
   );
   app.post('/v1/assistant', async (_request, reply) =>
-    reply
-      .code(503)
-      .send({
-        error: 'PARTNER_ACCESS_PENDING',
-        message:
-          'ChatGPT subscription authorization is not enabled. Partner approval and approved mobile authorization must be verified before activation.',
-        billingFallback: false,
-        coreAvailable: true,
-      }),
+    reply.code(503).send({
+      error: 'PARTNER_ACCESS_PENDING',
+      message:
+        'ChatGPT subscription authorization is not enabled. Partner approval and approved mobile authorization must be verified before activation.',
+      billingFallback: false,
+      coreAvailable: true,
+    }),
   );
   return app;
 }

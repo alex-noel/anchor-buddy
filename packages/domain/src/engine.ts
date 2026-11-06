@@ -22,6 +22,7 @@ import {
   pointInArea,
 } from './geo.ts';
 import { estimateCost, localDate } from './cost.ts';
+import { getPreferredBeddings } from './seabed.ts';
 import { assertInputs, validateAssessmentContext } from './validation.ts';
 
 const NM = 1852;
@@ -677,7 +678,7 @@ function assess(
           'excluded',
         );
     }
-    if (anchored && (place.holding === 'unknown' || place.holding === 'rock'))
+    if (anchored && ['unknown', 'rock', 'grass'].includes(place.holding))
       add(
         'holding_unknown',
         'Suitable holding ground is not established for this anchor.',
@@ -695,7 +696,7 @@ function assess(
     bedding = beddings.size === 1 ? evidence[0]!.holding : 'unknown';
     const holding = evidence.find(
       (area) =>
-        ['sand', 'mud', 'mixed'].includes(area.holding) &&
+        ['sand', 'mud', 'mixed', 'gravel', 'clay', 'silt', 'shell'].includes(area.holding) &&
         area.compatibleAnchorTypes.includes(vessel.anchor.type),
     );
     if (!holding || bedding === 'unknown')
@@ -704,17 +705,18 @@ function assess(
         'This position has no unambiguous, verified equipment-compatible holding-ground evidence.',
         'insufficient_evidence',
       );
-    if (search.preferredBedding && search.preferredBedding !== 'any') {
-      if (bedding === 'unknown')
+    const preferredBeddings = getPreferredBeddings(search);
+    if (preferredBeddings.length) {
+      if (bedding === 'unknown' && !preferredBeddings.includes('unknown'))
         add(
           'bedding_unknown',
           'The preferred seabed cannot be confirmed at this drop point.',
           'insufficient_evidence',
         );
-      else if (search.preferredBedding !== bedding)
+      else if (bedding !== 'unknown' && !preferredBeddings.includes(bedding))
         add(
           'bedding_preference',
-          `This drop point has ${bedding} seabed; the search requests ${search.preferredBedding}.`,
+          `This drop point has ${bedding} seabed; the search requests ${preferredBeddings.join(', ')}.`,
           'excluded',
         );
     }
@@ -937,11 +939,11 @@ export function searchRegion(
     ...generated.candidates,
   ];
   const filters = options.filters;
+  const preferredBeddings = getPreferredBeddings(search);
   const matchesIntent = (a: Assessment) =>
-    (!search.preferredBedding ||
-      search.preferredBedding === 'any' ||
+    (!preferredBeddings.length ||
       !['anchorage', 'generated'].includes(a.candidate.kind) ||
-      a.bedding === search.preferredBedding) &&
+      preferredBeddings.includes(a.bedding)) &&
     (!filters?.fee?.length || filters.fee.includes(a.cost.status)) &&
     (!filters?.kinds?.length || filters.kinds.includes(a.candidate.kind)) &&
     (!filters?.overnightOnly ||

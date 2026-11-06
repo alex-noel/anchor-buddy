@@ -18,6 +18,7 @@ import {
   createDefaultSearch,
   createDemoPack,
   DEFAULT_VESSEL,
+  getPreferredBeddings,
   searchRegion,
   validateRegionPack,
   validateSearch,
@@ -39,13 +40,24 @@ import { Button, Card, Field, Icon, Notice, type IconName } from './components/u
 import Sheet from './components/Sheet';
 import AdvancedFiltersSheet from './components/AdvancedFiltersSheet';
 import MapLayersSheet from './components/MapLayersSheet';
+import MapDownloadsSheet from './components/MapDownloadsSheet';
+import RegionalDataSheet from './components/RegionalDataSheet';
 import OnboardingSheet from './components/Onboarding';
 import AppTour from './components/AppTour';
 import PlannerScreen from './screens/PlannerScreen';
 import WatchScreen from './screens/WatchScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import SavedScreen from './screens/SavedScreen';
-import { getLocal, setLocal } from './lib/storage';
+import { getLocal, setLocal, removeLocal } from './lib/storage';
+import { discoverRegion, findLocations } from './lib/regionalData';
+import {
+  cacheRegion,
+  createEmptyRegion,
+  readRegionCache,
+  regionContains,
+  type RegionalData,
+} from './lib/regionalDataCore';
+import { listMapAreas, deleteMapArea, subscribeMapAreas, type MapArea } from './lib/worldMaps';
 import { depth, distance } from './lib/units';
 import {
   DEFAULT_FILTERS,
@@ -79,8 +91,28 @@ const activeWatchStates = new Set(['arming', 'monitoring', 'alarm', 'position_un
 function AnchorApp() {
   const { width } = useWindowDimensions();
   const wide = width >= 960;
-  const [pack, setPack] = useState(() => createDemoPack());
-  const [vessel, setVessel] = useState<VesselProfile>(DEFAULT_VESSEL);
+  const [pack, setPack] = useState(() => createEmptyRegion(createDefaultSearch().origin, 3));
+  const [sampleMode, setSampleMode] = useState(false);
+  const [regionCache, setRegionCache] = useState<RegionalData[]>([]);
+  const [regionData, setRegionData] = useState<RegionalData | null>(null);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [dataError, setDataError] = useState('');
+  const [dataOpen, setDataOpen] = useState(false);
+  const dataRequest = useRef<AbortController | null>(null);
+  const evidenceWrites = useRef<Promise<void>>(Promise.resolve());
+  const [mapAreas, setMapAreas] = useState<MapArea[]>([]);
+  const [downloadSelection, setDownloadSelection] = useState<{
+    center: Position;
+    radiusNm: number;
+    resume?: MapArea;
+  } | null>(null);
+  const [previewArea, setPreviewArea] = useState<{ center: Position; radiusNm: number } | null>(
+    null,
+  );
+  const [vessel, setVessel] = useState<VesselProfile>(() => ({
+    ...DEFAULT_VESSEL,
+    name: 'My boat',
+  }));
   const [defaults, setDefaults] = useState<SearchRequest>(() => createDefaultSearch());
   const [activeSearch, setActiveSearch] = useState<SearchRequest | null>(null);
   const [searchDraft, setSearchDraft] = useState<SearchRequest | null>(null);
@@ -147,8 +179,8 @@ function AnchorApp() {
     let live = true;
     void (async () => {
       try {
-        const [region, boat, prefs, searchPrefs, legacySearch, searches, setup] = await Promise.all(
-          [
+        const [region, boat, prefs, searchPrefs, legacySearch, searches, setup, evidence] =
+          await Promise.all([
             getLocal<{ pack: RegionPack; savedAt: string }>('active-region'),
             getLocal<VesselProfile>('vessel'),
             getLocal<{ units: UnitSystem; offline: boolean; layers?: MapLayers }>('preferences'),
@@ -156,12 +188,19 @@ function AnchorApp() {
             getLocal<SearchRequest>('search'),
             getLocal<unknown>('saved-searches'),
             getLocal<boolean>('setup-complete-v2'),
-          ],
-        );
+            getLocal<unknown>('regional-evidence-v1'),
+          ]);
         if (!live) return;
-        if (region?.pack && !validateRegionPack(region.pack).length) {
+        const cached = readRegionCache(evidence);
+        setRegionCache(cached);
+        if (
+          region?.pack &&
+          region.pack.validation.status !== 'synthetic' &&
+          !validateRegionPack(region.pack).length
+        ) {
           setPack(region.pack);
           setSavedAt(region.savedAt);
+          setRegionData(cached.find((row) => row.pack.id === region.pack.id) ?? null);
         }
         if (boat && !validateVessel(boat).length) setVessel(boat);
         if (prefs) {
@@ -194,6 +233,15 @@ function AnchorApp() {
     })();
     return () => {
       live = false;
+    };
+  }, []);
+  const refreshMapAreas = () => void listMapAreas().then(setMapAreas).catch(notifyError);
+  useEffect(() => {
+    refreshMapAreas();
+    const unsubscribe = subscribeMapAreas(refreshMapAreas);
+    return () => {
+      dataRequest.current?.abort();
+      unsubscribe();
     };
   }, []);
   useEffect(() => {
@@ -336,14 +384,139 @@ function AnchorApp() {
     setDetail(null);
   };
   const savePreferences = (u: UnitSystem, o: boolean, l: MapLayers) => {
+    if (o && !offline) {
+      dataRequest.current?.abort();
+      setDataLoading(false);
+      setDataError('Offline mode uses downloaded evidence with its original source dates.');
+    }
     setUnits(u);
     setOffline(o);
     setLayers(l);
     void persist('preferences', { units: u, offline: o, layers: l, language: 'en' });
   };
   const openSearch = () =>
-    setSearchDraft(activeSearch ? { ...activeSearch } : freshSearch(defaults));
+    setSearchDraft(
+      activeSearch
+        ? { ...activeSearch }
+        : {
+            ...freshSearch(defaults),
+            ...(previewArea
+              ? { origin: previewArea.center, maxDistanceNm: Math.min(25, previewArea.radiusNm) }
+              : {}),
+          },
+    );
+  const updateEvidenceCache = (update: (previous: RegionalData[]) => RegionalData[]) => {
+    const task = evidenceWrites.current.then(async () => {
+      const next = update(readRegionCache(await getLocal('regional-evidence-v1')));
+      await setLocal('regional-evidence-v1', next);
+      setRegionCache(next);
+    });
+    evidenceWrites.current = task.catch(() => {});
+    return task;
+  };
+  const saveRegionalData = async (data: RegionalData) => {
+    const stored = { ...data, savedAt: new Date().toISOString() };
+    await updateEvidenceCache((previous) => cacheRegion(previous, stored));
+    return stored;
+  };
+  const loadSearchData = async (search: SearchRequest, forceLive = false) => {
+    dataRequest.current?.abort();
+    const controller = new AbortController();
+    dataRequest.current = controller;
+    setDataError('');
+    const cached = regionCache.find((row) =>
+      regionContains(row.pack, search.origin, search.maxDistanceNm),
+    );
+    if (!forceLive && sampleMode && regionContains(pack, search.origin, search.maxDistanceNm)) {
+      setDataLoading(false);
+      return;
+    }
+    const keepReviewed =
+      pack.validation.status === 'reviewed' &&
+      regionContains(pack, search.origin, search.maxDistanceNm);
+    if (offline) {
+      setDataLoading(false);
+      if (cached && !keepReviewed) {
+        setPack(cached.pack);
+        setRegionData(cached);
+        setSavedAt(cached.savedAt ?? null);
+      } else if (
+        !regionContains(pack, search.origin, search.maxDistanceNm) ||
+        pack.validation.status === 'synthetic'
+      ) {
+        try {
+          setPack(createEmptyRegion(search.origin, search.maxDistanceNm));
+        } catch (error) {
+          setDataError(String(error));
+        }
+        setRegionData(null);
+        setSavedAt(null);
+        setDataError(
+          'No downloaded nautical evidence covers this search. Cached display maps remain available; reconnect to load place and weather data.',
+        );
+      }
+      return;
+    }
+    setDataLoading(true);
+    setSampleMode(false);
+    if (cached && !keepReviewed) {
+      setPack(cached.pack);
+      setRegionData(cached);
+      setSavedAt(cached.savedAt ?? null);
+    } else if (
+      pack.validation.status !== 'reviewed' ||
+      !regionContains(pack, search.origin, search.maxDistanceNm)
+    ) {
+      try {
+        setPack(createEmptyRegion(search.origin, search.maxDistanceNm));
+      } catch (error) {
+        setDataError(String(error));
+        setDataLoading(false);
+        return;
+      }
+      setRegionData(null);
+      setSavedAt(null);
+    }
+    try {
+      const loaded = await discoverRegion(search, controller.signal);
+      if (controller.signal.aborted || dataRequest.current !== controller) return;
+      // A separately reviewed chart pack remains authoritative. Live discovery cannot downgrade it.
+      if (keepReviewed) {
+        setRegionData(loaded);
+        setDataError(
+          'Live source observations loaded. The reviewed assessment pack remains active; refresh its published version in Settings for updated analysis.',
+        );
+      } else {
+        setPack(loaded.pack);
+        setRegionData(loaded);
+      }
+      setAssessedAt(new Date().toISOString());
+      try {
+        const stored = await saveRegionalData(loaded);
+        if (!controller.signal.aborted) {
+          if (!keepReviewed) {
+            setSavedAt(stored.savedAt ?? null);
+            await setLocal('active-region', { pack: loaded.pack, savedAt: stored.savedAt });
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted)
+          setDataError('Live data loaded, but could not be cached: ' + String(error));
+      }
+    } catch (error) {
+      if (!controller.signal.aborted)
+        setDataError(
+          (error instanceof Error ? error.message : String(error)) +
+            (cached
+              ? ' Previously downloaded evidence is retained with its original dates.'
+              : ' No sample results have been substituted.'),
+        );
+    } finally {
+      if (dataRequest.current === controller) setDataLoading(false);
+    }
+  };
   const submitSearch = (search: SearchRequest) => {
+    setSearchDraft(null);
     setActiveSearch(search);
     setAssessedAt(new Date().toISOString());
     setCustomPin(null);
@@ -353,8 +526,13 @@ function AnchorApp() {
     setMapPreview(false);
     setTab('explore');
     setFlow('base');
+    setPreviewArea(null);
+    void loadSearchData(search);
   };
   const closeSearch = () => {
+    dataRequest.current?.abort();
+    setDataLoading(false);
+    setDataError('');
     setActiveSearch(null);
     setCustomPin(null);
     setSelectedId(undefined);
@@ -363,6 +541,65 @@ function AnchorApp() {
     setMapPreview(false);
     setFlow('base');
   };
+  const downloadCurrentArea = () =>
+    setDownloadSelection({
+      center: activeSearch?.origin ?? previewArea?.center ?? defaults.origin,
+      radiusNm: Math.min(25, activeSearch?.maxDistanceNm ?? previewArea?.radiusNm ?? 3),
+    });
+  const areaSelection = (area: MapArea) => ({
+    center: [
+      (area.bounds[0] + area.bounds[2]) / 2,
+      (area.bounds[1] + area.bounds[3]) / 2,
+    ] as Position,
+    radiusNm: Math.min(50, (area.bounds[3] - area.bounds[1]) * 30),
+  });
+  const openCachedMap = (area: MapArea) => {
+    closeSearch();
+    const selection = areaSelection(area);
+    setPreviewArea(selection);
+    setMapPreview(true);
+    setView('map');
+    setTab('explore');
+    const cached = regionCache.find((row) =>
+      regionContains(row.pack, selection.center, selection.radiusNm),
+    );
+    if (cached) {
+      setPack(cached.pack);
+      setRegionData(cached);
+      setSavedAt(cached.savedAt ?? null);
+    } else {
+      setPack(createEmptyRegion(selection.center, selection.radiusNm, area.name));
+      setRegionData(null);
+      setSavedAt(null);
+    }
+    setSampleMode(false);
+  };
+  const openCachedRegion = (data: RegionalData) => {
+    closeSearch();
+    setPack(data.pack);
+    setRegionData(data);
+    setSavedAt(data.savedAt ?? null);
+    setSampleMode(false);
+    setPreviewArea({
+      center: [
+        (data.pack.bounds[0] + data.pack.bounds[2]) / 2,
+        (data.pack.bounds[1] + data.pack.bounds[3]) / 2,
+      ],
+      radiusNm: Math.min(50, (data.pack.bounds[3] - data.pack.bounds[1]) * 30),
+    });
+    setMapPreview(true);
+    setView('map');
+    setTab('explore');
+    setAssessedAt(new Date().toISOString());
+  };
+  const removeCachedRegion = (id: string) =>
+    void (async () => {
+      await updateEvidenceCache((previous) => previous.filter((row) => row.pack.id !== id));
+      if (pack.id === id) {
+        await removeLocal('active-region');
+        setSavedAt(null);
+      }
+    })().catch(notifyError);
   const saveVessel = (next: VesselProfile) => {
     setVessel(next);
     setVesselConfigured(true);
@@ -379,12 +616,15 @@ function AnchorApp() {
     const time = new Date().toISOString();
     await setLocal('active-region', { pack, savedAt: time });
     setSavedAt(time);
+    if (regionData) await saveRegionalData(regionData);
   };
   const changePack = (next: RegionPack) => {
     setPack(next);
     setSavedAt(new Date().toISOString());
     closeSearch();
     setAssessedAt(new Date().toISOString());
+    setRegionData(null);
+    setSampleMode(next.validation.status === 'synthetic');
   };
   const resetDemo = () =>
     void (async () => {
@@ -425,7 +665,7 @@ function AnchorApp() {
       const time = new Date().toISOString();
       const snapshot: SavedSearch = {
         id: 'search-' + Date.now(),
-        name: saveName.trim() || 'Florida Keys search',
+        name: saveName.trim() || pack.name + ' search',
         savedAt: time,
         search: activeSearch,
         filters: { ...filters },
@@ -459,10 +699,12 @@ function AnchorApp() {
       setSaved(next);
     })().catch(notifyError);
   const reopenSaved = (snapshot: SavedSearch) => {
-    if (snapshot.packId !== pack.id) {
-      setMessage(
-        'Install the ' + snapshot.packId + ' region in Settings before reopening this search.',
-      );
+    if (
+      offline &&
+      snapshot.packId !== pack.id &&
+      !regionCache.some((row) => row.pack.id === snapshot.packId)
+    ) {
+      setMessage('Reconnect to reopen this area, or download its place and weather data first.');
       return;
     }
     setFilters(snapshot.filters);
@@ -500,7 +742,7 @@ function AnchorApp() {
     Number(filters.fee !== 'all') +
     Number(filters.assessment !== 'recommended') +
     Number(filters.compatibleOnly) +
-    Number((activeSearch ?? defaults).preferredBedding !== 'any');
+    Number(getPreferredBeddings(activeSearch ?? defaults).length > 0);
   if (!ready)
     return (
       <View style={s.loading}>
@@ -616,6 +858,13 @@ function AnchorApp() {
           onSave={savePack}
           onPack={changePack}
           onDemo={resetDemo}
+          sampleMode={sampleMode}
+          onUseLiveData={() => {
+            setSampleMode(false);
+            void loadSearchData(activeSearch ?? freshSearch(defaults), true);
+          }}
+          onDownloadMap={downloadCurrentArea}
+          onViewData={() => setDataOpen(true)}
           vessel={vessel}
           onEditVessel={() => setProfileOpen(true)}
           onEditDefaults={() => setDefaultsOpen(true)}
@@ -638,6 +887,14 @@ function AnchorApp() {
           savedAt={savedAt}
           units={units}
           onOpen={reopenSaved}
+          mapAreas={mapAreas}
+          dataRegions={regionCache}
+          onDownloadMap={downloadCurrentArea}
+          onOpenMap={openCachedMap}
+          onResumeMap={(area) => setDownloadSelection({ ...areaSelection(area), resume: area })}
+          onDeleteMap={(id) => void deleteMapArea(id).then(refreshMapAreas).catch(notifyError)}
+          onOpenRegion={openCachedRegion}
+          onDeleteRegion={removeCachedRegion}
           onDelete={deleteSaved}
           onMap={() => {
             closeSearch();
@@ -676,7 +933,7 @@ function AnchorApp() {
                     accessibilityLabel="Save results"
                     onPress={() => {
                       setSaveName(
-                        'Florida Keys · ' + new Date(activeSearch.arrival).toLocaleDateString(),
+                        pack.name + ' · ' + new Date(activeSearch.arrival).toLocaleDateString(),
                       );
                       setSaveError('');
                       setSaveOpen(true);
@@ -753,8 +1010,13 @@ function AnchorApp() {
                     accessibilityRole="button"
                     accessibilityLabel={mode === 'map' ? 'Map view' : 'List view'}
                     aria-pressed={view === mode}
+                    disabled={mode === 'list' && !activeSearch}
                     onPress={() => setView(mode)}
-                    style={[s.viewButton, view === mode && s.viewSelected]}
+                    style={[
+                      s.viewButton,
+                      view === mode && s.viewSelected,
+                      mode === 'list' && !activeSearch && { opacity: 0.4 },
+                    ]}
                   >
                     <Icon
                       name={mode === 'map' ? 'map' : 'list'}
@@ -771,6 +1033,84 @@ function AnchorApp() {
               </View>
             </View>
           </View>
+          {activeSearch || mapPreview ? (
+            <View
+              style={{
+                paddingHorizontal: wide ? 24 : 16,
+                paddingVertical: 8,
+                gap: 6,
+                borderBottomWidth: 1,
+                borderColor: c.line,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                }}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setDataOpen(true)}
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    paddingVertical: 5,
+                  }}
+                >
+                  {dataLoading ? (
+                    <ActivityIndicator size="small" color={c.blue} />
+                  ) : (
+                    <Icon name="database" size={15} color={c.blue} />
+                  )}
+                  <Text style={s.linkText}>
+                    {dataLoading
+                      ? 'Loading live sources…'
+                      : sampleMode
+                        ? 'Sample records · view sources'
+                        : offline
+                          ? 'Downloaded data · view coverage'
+                          : 'Sources & coverage'}
+                  </Text>
+                </Pressable>
+                {dataLoading ? (
+                  <Button
+                    small
+                    secondary
+                    onPress={() => {
+                      dataRequest.current?.abort();
+                      setDataLoading(false);
+                      setDataError(
+                        'Loading cancelled. Previously available data remains unchanged.',
+                      );
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
+              </View>
+              {dataError ? (
+                <Text accessibilityLiveRegion="polite" style={s.secondaryText}>
+                  {dataError}
+                </Text>
+              ) : regionData && !dataLoading ? (
+                <Text style={s.secondaryText}>
+                  {regionData.providers.some(
+                    (provider) =>
+                      provider.id === 'osm-overpass' && provider.status === 'unavailable',
+                  )
+                    ? 'Place service unavailable · '
+                    : `${regionData.pack.places.length} place records · `}
+                  {regionData.pack.weather.length} forecast intervals. Open sources for missing
+                  coverage.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           {!showMap ? (
             <View style={s.empty}>
               <View style={s.emptyIcon}>
@@ -831,10 +1171,13 @@ function AnchorApp() {
                       ))
                     ) : (
                       <Card>
-                        <Text style={s.sectionLabel}>No matching results</Text>
+                        <Text style={s.sectionLabel}>
+                          {dataLoading ? 'Loading places and weather…' : 'No matching results'}
+                        </Text>
                         <Text style={s.secondaryText}>
-                          Try another area or review the filters. Missing evidence cannot establish
-                          a suitable position.
+                          {dataLoading
+                            ? 'Available source records will appear here. You can keep using the map while they load.'
+                            : 'Try another area or review the filters. Missing evidence cannot establish a suitable position.'}
                         </Text>
                         <Button secondary onPress={openSearch}>
                           Edit search
@@ -850,7 +1193,7 @@ function AnchorApp() {
                     pack={pack}
                     assessments={assessments}
                     selectedId={selectedId}
-                    origin={activeSearch?.origin ?? defaults.origin}
+                    origin={activeSearch?.origin ?? previewArea?.center ?? defaults.origin}
                     onSelect={(id) => {
                       const found = assessments.find((a) => a.id === id);
                       if (found) select(found);
@@ -860,7 +1203,7 @@ function AnchorApp() {
                     showDepth={layers.depth}
                     showBedding={layers.bedding}
                     showMarks={layers.marks}
-                    searchRadiusNm={activeSearch?.maxDistanceNm}
+                    searchRadiusNm={activeSearch?.maxDistanceNm ?? previewArea?.radiusNm}
                   />
                   <View style={s.mapTop}>
                     <Pressable
@@ -870,6 +1213,15 @@ function AnchorApp() {
                     >
                       <Icon name="layers" size={16} />
                       <Text style={s.linkText}>Layers</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Download map area"
+                      onPress={downloadCurrentArea}
+                      style={s.mapControl}
+                    >
+                      <Icon name="download" size={16} />
+                      <Text style={s.linkText}>Download</Text>
                     </Pressable>
                     {activeSearch ? (
                       <View style={s.mapCount}>
@@ -986,6 +1338,7 @@ function AnchorApp() {
           pack={pack}
           offline={offline}
           units={units}
+          onFindLocation={findLocations}
           onSave={submitSearch}
           onClose={() => setSearchDraft(null)}
         />
@@ -993,13 +1346,22 @@ function AnchorApp() {
       {advancedOpen ? (
         <AdvancedFiltersSheet
           filters={filters}
-          bedding={(activeSearch ?? defaults).preferredBedding}
+          bedding={getPreferredBeddings(activeSearch ?? defaults)}
           onApply={(next, bedding) => {
             setFilters(next);
             if (activeSearch) {
-              setActiveSearch({ ...activeSearch, preferredBedding: bedding });
+              setActiveSearch({
+                ...activeSearch,
+                preferredBeddings: bedding,
+                preferredBedding: undefined,
+              });
               setAssessedAt(new Date().toISOString());
-            } else saveDefaults({ ...defaults, preferredBedding: bedding });
+            } else
+              saveDefaults({
+                ...defaults,
+                preferredBeddings: bedding,
+                preferredBedding: undefined,
+              });
           }}
           onClose={() => setAdvancedOpen(false)}
         />
@@ -1010,6 +1372,48 @@ function AnchorApp() {
           layers={layers}
           onChange={(next) => savePreferences(units, offline, next)}
           onClose={() => setLayersOpen(false)}
+        />
+      ) : null}
+      {downloadSelection ? (
+        <MapDownloadsSheet
+          pack={pack}
+          center={downloadSelection.center}
+          radiusNm={downloadSelection.radiusNm}
+          resume={downloadSelection.resume}
+          onSaved={refreshMapAreas}
+          onEvidenceDownload={async (center, radiusNm) => {
+            const data = await discoverRegion({
+              ...freshSearch(defaults),
+              origin: center,
+              maxDistanceNm: radiusNm,
+            });
+            await saveRegionalData(data);
+          }}
+          onClose={() => setDownloadSelection(null)}
+        />
+      ) : null}
+      {dataOpen ? (
+        <RegionalDataSheet
+          units={units}
+          pack={regionData?.pack ?? pack}
+          data={regionData}
+          error={dataError}
+          loading={dataLoading}
+          onRetry={() =>
+            void loadSearchData(
+              activeSearch ?? {
+                ...freshSearch(defaults),
+                origin: previewArea?.center ?? defaults.origin,
+                maxDistanceNm: previewArea?.radiusNm ?? defaults.maxDistanceNm,
+              },
+              true,
+            )
+          }
+          onSettings={() => {
+            setDataOpen(false);
+            changeTab('settings');
+          }}
+          onClose={() => setDataOpen(false)}
         />
       ) : null}
       {currentDetail ? (
@@ -1202,6 +1606,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     alignItems: 'center',
+    flexWrap: 'wrap',
   },
   mapControl: {
     flexDirection: 'row',

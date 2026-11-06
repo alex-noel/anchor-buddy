@@ -57,6 +57,7 @@ export default function Chart(props: ChartProps) {
         base,
         props.showBedding,
         props.searchRadiusNm ? { origin: props.origin, radiusNm: props.searchRadiusNm } : undefined,
+        props.showMarks,
       ) as StyleSpecification,
     [
       props.pack,
@@ -64,6 +65,7 @@ export default function Chart(props: ChartProps) {
       props.onlineBasemap,
       props.showDepth,
       props.showBedding,
+      props.showMarks,
       props.origin,
       props.searchRadiusNm,
       base,

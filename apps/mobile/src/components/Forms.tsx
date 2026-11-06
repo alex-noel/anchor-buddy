@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Linking, Pressable, Text, View } from 'react-native';
 import {
+  getPreferredBeddings,
   validateSearch,
   validateVessel,
   type Assessment,
+  type Bedding,
   type Position,
   type RegionPack,
   type SearchRequest,
@@ -13,20 +15,14 @@ import {
 import Sheet from './Sheet';
 import Chart from './Chart';
 import SelectField from './SelectField';
+import SeabedSelect from './SeabedSelect';
+import { parseInputDecimal } from '../lib/inputNumbers';
 import LocalDateHourField from './LocalDateHourField';
 import { Button, Chip, Eyebrow, Field, Icon, Notice, s } from './ui';
 import { colors as c } from '../theme';
 import { fromIsoToLocalHour, localHourToIso, timezoneLabel } from '../lib/localDateHour';
 
 const emptyAssessments: Assessment[] = [];
-export const beddingOptions = [
-  { value: 'sand', label: 'Sand' },
-  { value: 'mud', label: 'Mud' },
-  { value: 'mixed', label: 'Mixed seabed' },
-  { value: 'rock', label: 'Rock' },
-  { value: 'unknown', label: 'Unknown seabed' },
-  { value: 'any', label: 'Any seabed' },
-];
 const startingLimits = { maxWindKnots: 15, maxGustKnots: 20, maxWaveM: 0.5, maxCurrentKnots: 1 };
 const numericKeys = [
   'maxDistanceNm',
@@ -68,6 +64,7 @@ export function SearchSheet({
   offline = false,
   units = 'nautical',
   mode = 'search',
+  onFindLocation,
 }: {
   search: SearchRequest;
   onSave: (s: SearchRequest) => void;
@@ -76,6 +73,7 @@ export function SearchSheet({
   offline?: boolean;
   units?: UnitSystem;
   mode?: 'search' | 'defaults';
+  onFindLocation?: (query: string) => Promise<{ name: string; position: Position }[]>;
 }) {
   const [values, setValues] = useState<Record<NumericKey, string>>(
     () =>
@@ -86,9 +84,14 @@ export function SearchSheet({
   const [lat, setLat] = useState(String(search.origin[1]));
   const [lon, setLon] = useState(String(search.origin[0]));
   const [visitMode, setVisitMode] = useState(search.visitMode);
-  const [bedding, setBedding] = useState<NonNullable<SearchRequest['preferredBedding']>>(
-    search.preferredBedding ?? 'sand',
+  const [bedding, setBedding] = useState<Bedding[]>(() => getPreferredBeddings(search));
+  const [locationQuery, setLocationQuery] = useState('');
+  const [locationResults, setLocationResults] = useState<{ name: string; position: Position }[]>(
+    [],
   );
+  const [locationError, setLocationError] = useState('');
+  const [findingLocation, setFindingLocation] = useState(false);
+  const locationRequest = useRef(0);
   const [arrival, setArrival] = useState(() => fromIsoToLocalHour(search.arrival));
   const [departure, setDeparture] = useState(() => fromIsoToLocalHour(search.departure));
   const [coordinatesOpen, setCoordinatesOpen] = useState(!pack);
@@ -97,24 +100,47 @@ export function SearchSheet({
     const ratio = numericUnit(key, units).ratio;
     // A display-unit round trip must not silently change the stored safety threshold.
     if (values[key] === formatted(search[key] * ratio)) return search[key];
-    return values[key].trim() ? Number(values[key]) / ratio : NaN;
+    return parseInputDecimal(values[key]) / ratio;
   };
   const radius = valueInBaseUnits('maxDistanceNm');
   const position = useMemo<Position>(
     () =>
       lat.trim() &&
       lon.trim() &&
-      Number.isFinite(Number(lat)) &&
-      Number.isFinite(Number(lon)) &&
-      Math.abs(Number(lat)) <= 90 &&
-      Math.abs(Number(lon)) <= 180
-        ? [Number(lon), Number(lat)]
+      Number.isFinite(parseInputDecimal(lat)) &&
+      Number.isFinite(parseInputDecimal(lon)) &&
+      Math.abs(parseInputDecimal(lat)) <= 85 &&
+      Math.abs(parseInputDecimal(lon)) <= 180
+        ? [parseInputDecimal(lon), parseInputDecimal(lat)]
         : search.origin,
     [lat, lon, search.origin],
   );
   const setPosition = (p: Position) => {
     setLat(p[1].toFixed(6));
     setLon(p[0].toFixed(6));
+  };
+  const findLocation = async () => {
+    if (!onFindLocation || !locationQuery.trim() || offline) return;
+    const request = ++locationRequest.current;
+    setFindingLocation(true);
+    setLocationError('');
+    setLocationResults([]);
+    try {
+      const matches = await onFindLocation(locationQuery.trim());
+      if (request !== locationRequest.current) return;
+      setLocationResults(matches);
+      if (!matches.length)
+        setLocationError('No locations found. Try a nearby town or choose a point on the map.');
+    } catch (error) {
+      if (request === locationRequest.current)
+        setLocationError(
+          error instanceof Error
+            ? error.message
+            : 'Location search is unavailable. Choose a point on the map.',
+        );
+    } finally {
+      if (request === locationRequest.current) setFindingLocation(false);
+    }
   };
   const field = (key: NumericKey, label: string, help?: string) => (
     <Field
@@ -140,9 +166,13 @@ export function SearchSheet({
   const save = () => {
     const next: SearchRequest = {
       ...search,
-      origin: [lon.trim() ? Number(lon) : NaN, lat.trim() ? Number(lat) : NaN],
+      origin: [
+        lon.trim() ? parseInputDecimal(lon) : NaN,
+        lat.trim() ? parseInputDecimal(lat) : NaN,
+      ],
       visitMode,
-      preferredBedding: bedding,
+      preferredBedding: undefined,
+      preferredBeddings: bedding,
     };
     for (const key of numericKeys) next[key] = valueInBaseUnits(key);
     try {
@@ -179,6 +209,65 @@ export function SearchSheet({
       {mode === 'search' ? (
         <View style={{ gap: 12 }}>
           <Eyebrow>Search area</Eyebrow>
+          {onFindLocation ? (
+            <View style={{ gap: 10 }}>
+              <Field
+                label="Town, harbour or address"
+                value={locationQuery}
+                onChange={(value) => {
+                  setLocationQuery(value);
+                  setLocationResults([]);
+                  setLocationError('');
+                  locationRequest.current++;
+                  setFindingLocation(false);
+                }}
+                help={
+                  offline
+                    ? 'Location lookup needs a connection. You can still choose a point on the map or enter coordinates.'
+                    : undefined
+                }
+              />
+              <Button
+                secondary
+                small
+                icon="search"
+                disabled={offline || findingLocation || !locationQuery.trim()}
+                onPress={() => void findLocation()}
+              >
+                {findingLocation ? 'Finding locations…' : 'Find location'}
+              </Button>
+              {locationResults.map((match, index) => (
+                <Pressable
+                  key={`${match.name}-${index}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use ${match.name}`}
+                  onPress={() => {
+                    setPosition(match.position);
+                    setLocationQuery(match.name);
+                    setLocationResults([]);
+                  }}
+                  style={{
+                    padding: 12,
+                    borderWidth: 1,
+                    borderColor: c.line,
+                    borderRadius: 8,
+                    backgroundColor: c.white,
+                    flexDirection: 'row',
+                    gap: 10,
+                  }}
+                >
+                  <Icon name="map-pin" size={16} />
+                  <Text style={{ flex: 1, color: c.ink, fontSize: 13, lineHeight: 19 }}>
+                    {match.name}
+                  </Text>
+                </Pressable>
+              ))}
+              {locationError ? (
+                <Text style={{ color: c.red, fontSize: 12, lineHeight: 18 }}>{locationError}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
           {pack ? (
             <>
               <Text style={s.help}>Tap the map to set the centre. Adjust the radius below.</Text>
@@ -200,7 +289,7 @@ export function SearchSheet({
                   onlineBasemap={!offline}
                   selectOnTap
                   searchRadiusNm={Number.isFinite(radius) && radius > 0 ? radius : undefined}
-                  initialZoom={Math.max(8, Math.min(15, 12 - Math.log2(Math.max(radius, 0.1) / 2)))}
+                  initialZoom={12.2}
                   showBedding={false}
                   showMarks={false}
                 />
@@ -220,8 +309,8 @@ export function SearchSheet({
           </Pressable>
           {coordinatesOpen ? (
             <View style={{ flexDirection: 'row', gap: 12 }}>
-              <Field label="Latitude" value={lat} onChange={setLat} />
-              <Field label="Longitude" value={lon} onChange={setLon} />
+              <Field signed label="Latitude" value={lat} onChange={setLat} />
+              <Field signed label="Longitude" value={lon} onChange={setLon} />
             </View>
           ) : null}
         </View>
@@ -230,7 +319,7 @@ export function SearchSheet({
         {field(
           'maxDistanceNm',
           'Search radius',
-          'Straight-line distance from the selected centre.',
+          'Straight-line distance from the selected centre. Live places/weather searches support up to 25 nm; reviewed or downloaded-data searches support up to 50 nm when coverage is available.',
         )}
         {mode === 'search' ? (
           <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -272,13 +361,7 @@ export function SearchSheet({
             'Minimum water below your loaded keel.',
           )}
         </View>
-        <SelectField
-          label="Preferred bedding"
-          value={bedding}
-          options={beddingOptions}
-          onChange={(value) => setBedding(value as NonNullable<SearchRequest['preferredBedding']>)}
-          help="Filters anchor positions by seabed evidence. Dock and mooring results remain available. Holding and equipment checks still apply."
-        />
+        <SeabedSelect value={bedding} onChange={setBedding} />
         {field(
           'safetyMarginM',
           'Swing-footprint margin',
@@ -417,7 +500,7 @@ export function ProfileSheet({
     const original = originalValues[key];
     if (original !== undefined && dimensions[key] === formatted(original * ratioFor(key)))
       return original;
-    return dimensions[key].trim() ? Number(dimensions[key]) / ratioFor(key) : NaN;
+    return parseInputDecimal(dimensions[key]) / ratioFor(key);
   };
   const save = () => {
     const changedEquipment =

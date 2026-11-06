@@ -16,7 +16,9 @@ import { Button, Card, Chip, Eyebrow, Field, Icon, Notice } from '../components/
 import SelectField from '../components/SelectField';
 import { colors as c } from '../theme';
 import { depth, localTime } from '../lib/units';
-import { getLocal, setLocal } from '../lib/storage';
+import { setLocal } from '../lib/storage';
+import { providerBase } from '../lib/regionalDataCore';
+import { getAPIBase } from '../lib/regionalData';
 import { installPack, validateManifest, validSegment } from '../lib/packInstall';
 import { beginPackStage, downloadOfflineChart, loadInstalledChartStyle } from '../lib/packFiles';
 export interface MapLayerDefaults {
@@ -97,19 +99,6 @@ function LayerRow({
   );
 }
 
-function providerBase(address: string) {
-  const u = new URL(address);
-  if (u.username || u.password || u.search || u.hash)
-    throw new Error(
-      'Provider address must not contain credentials, query parameters or fragments.',
-    );
-  if (
-    u.protocol !== 'https:' &&
-    !(u.protocol === 'http:' && ['localhost', '127.0.0.1', '10.0.2.2'].includes(u.hostname))
-  )
-    throw new Error('Use HTTPS for a remote provider, or localhost for development.');
-  return u.href.replace(/\/$/, '');
-}
 export default function SettingsScreen({
   pack,
   units,
@@ -129,6 +118,10 @@ export default function SettingsScreen({
   setLanguage,
   layers,
   setLayers,
+  onDownloadMap,
+  onViewData,
+  onUseLiveData,
+  sampleMode = false,
 }: {
   pack: RegionPack;
   units: UnitSystem;
@@ -148,11 +141,18 @@ export default function SettingsScreen({
   setLanguage?: (language: 'en') => void;
   layers?: MapLayerDefaults;
   setLayers?: (layers: MapLayerDefaults) => void;
+  onDownloadMap?: () => void;
+  onViewData?: () => void;
+  onUseLiveData?: () => void;
+  sampleMode?: boolean;
 }) {
   const { width } = useWindowDimensions();
   const [showSources, setShowSources] = useState(false);
   const [showProvider, setShowProvider] = useState(false);
-  const [api, setApi] = useState(process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001');
+  const [api, setApi] = useState(
+    process.env.EXPO_PUBLIC_API_URL ||
+      (Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001'),
+  );
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [regions, setRegions] = useState<
@@ -162,11 +162,8 @@ export default function SettingsScreen({
   const [chartReady, setChartReady] = useState(false);
   useEffect(() => {
     let active = true;
-    void getLocal<unknown>('provider-api-url')
-      .then((saved) => {
-        if (!active || saved === null) return;
-        if (typeof saved !== 'string') throw new Error('Stored provider address is invalid.');
-        const address = providerBase(saved);
+    void getAPIBase()
+      .then((address) => {
         if (active) setApi(address);
       })
       .catch(() => {
@@ -340,7 +337,7 @@ export default function SettingsScreen({
           : 'Forecast validity still applies offline.') +
         (manifest.offlineChart
           ? ' Chart tiles can now be downloaded separately.'
-          : ' This pack has no approved offline chart tile source.'),
+          : ' Reviewed chart tiles are not included; worldwide basemaps can be downloaded separately.'),
     );
   };
   return (
@@ -412,19 +409,19 @@ export default function SettingsScreen({
           <Eyebrow>MAP LAYERS</Eyebrow>
           <LayerRow
             label="Water depth"
-            detail="Charted depth areas and their available bounds"
+            detail="Charted depth bounds where available, plus GEBCO global bathymetry as online display context. GEBCO does not establish clearance."
             value={layers.depth}
             onChange={(value) => setLayers({ ...layers, depth: value })}
           />
           <LayerRow
             label="Seabed"
-            detail="Available sand, mud, rock and other bottom evidence"
+            detail="Reviewed seabed evidence where available. Seabed remains unknown outside reviewed coverage."
             value={layers.bedding}
             onChange={(value) => setLayers({ ...layers, bedding: value })}
           />
           <LayerRow
             label="Marks"
-            detail="Available charted marks and hazards"
+            detail="Available charted marks plus OpenSeaMap community seamarks online. Display marks do not establish complete hazard coverage."
             value={layers.marks}
             onChange={(value) => setLayers({ ...layers, marks: value })}
           />
@@ -435,6 +432,20 @@ export default function SettingsScreen({
       ) : null}
       <Card>
         <Eyebrow>OFFLINE MAPS & DATA</Eyebrow>
+        {onDownloadMap ? (
+          <Button icon="download" onPress={onDownloadMap}>
+            Download a map area
+          </Button>
+        ) : null}
+        <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
+          Save worldwide basemap areas for offline display. Reviewed nautical analysis and cached
+          places/weather are stored separately; forecasts keep their original expiry dates.
+        </Text>
+        {onViewData ? (
+          <Button secondary small icon="database" onPress={onViewData}>
+            View current sources & coverage
+          </Button>
+        ) : null}
         <View style={{ flexDirection: 'row', gap: 14, alignItems: 'center' }}>
           <View style={{ flex: 1, gap: 6 }}>
             <Text style={{ fontSize: 18, fontWeight: '600', color: c.ink }}>{pack.name}</Text>
@@ -449,12 +460,13 @@ export default function SettingsScreen({
         </Text>
         <Button
           disabled={busy}
+          secondary
           icon="download"
           onPress={() =>
             run(async () => {
               await onSave();
               setMessage(
-                'Analysis snapshot saved. Map tiles are downloaded separately when available.',
+                'Analysis snapshot saved with its original evidence dates. Basemap areas can be downloaded separately.',
               );
             })
           }
@@ -477,18 +489,19 @@ export default function SettingsScreen({
                 })
               }
             >
-              {chartReady ? 'Verify downloaded map' : 'Download map tiles'}
+              {chartReady ? 'Verify reviewed chart tiles' : 'Download reviewed chart tiles'}
             </Button>
             {Platform.OS === 'web' ? (
               <Text style={{ fontSize: 12, color: c.muted }}>
-                Map downloads require the iOS or Android app. The browser saves analysis data.
+                Reviewed chart-provider downloads require the iOS or Android app. Worldwide basemap
+                downloads are also available in the browser.
               </Text>
             ) : null}
           </View>
         ) : (
           <Text style={{ fontSize: 12, color: c.muted, lineHeight: 18 }}>
-            This region has no approved offline map tile source. Online map backgrounds will be
-            unavailable offline.
+            No reviewed chart tiles are bundled for this region. You can still download its
+            worldwide basemap above; it does not provide nautical clearance evidence.
           </Text>
         )}
         <LayerRow
@@ -506,6 +519,7 @@ export default function SettingsScreen({
           accessibilityRole="button"
           accessibilityLabel="Data connection"
           accessibilityState={{ expanded: showProvider }}
+          aria-expanded={showProvider}
           onPress={() => setShowProvider(!showProvider)}
           style={{
             flexDirection: 'row',
@@ -542,8 +556,9 @@ export default function SettingsScreen({
               </View>
             ))}
             <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
-              Regional providers supply chart evidence, weather, tides, restrictions, places and
-              tariffs. Only reviewed regional packs can be installed.
+              The API supplies global live places and available weather, with source status and
+              coverage shown per area. Reviewed regional packs separately supply supported nautical
+              evidence, restrictions and tariffs; only reviewed packs can be installed.
             </Text>
           </View>
         ) : null}
@@ -553,6 +568,7 @@ export default function SettingsScreen({
           accessibilityRole="button"
           accessibilityLabel="Source details"
           accessibilityState={{ expanded: showSources }}
+          aria-expanded={showSources}
           onPress={() => setShowSources(!showSources)}
           style={{
             flexDirection: 'row',
@@ -615,9 +631,18 @@ export default function SettingsScreen({
       </Card>
       {message ? <Notice>{message}</Notice> : null}
       <View style={{ gap: 12 }}>
+        {sampleMode && onUseLiveData ? (
+          <Button disabled={busy} icon="globe" onPress={onUseLiveData}>
+            Use live regional data
+          </Button>
+        ) : null}
         <Button secondary disabled={busy} icon="refresh-cw" onPress={onDemo}>
-          Refresh bundled sample data
+          {sampleMode ? 'Refresh optional sample data' : 'Load optional sample workspace'}
         </Button>
+        <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+          Sample geometry is for trying controls and assessments. It does not describe a real
+          anchorage.
+        </Text>
         <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
           Anchor Buddy 0.1 · Profiles and watch logs are stored on this device.
         </Text>

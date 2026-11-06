@@ -8,6 +8,13 @@ import { Button, Card, Check, Eyebrow, Field, Icon, Notice } from '../components
 import { colors as c } from '../theme';
 import { depth } from '../lib/units';
 import { setLocal } from '../lib/storage';
+import {
+  parseInputDecimal,
+  createLengthDraft,
+  convertLengthDraft,
+  readLengthDraft,
+  lengthInputUnit,
+} from '../lib/inputNumbers';
 
 const activeStates = new Set<Watch.WatchState>([
   'arming',
@@ -31,8 +38,16 @@ export default function WatchScreen({
   const [error, setError] = useState('');
   const [latitude, setLatitude] = useState(String(position[1]));
   const [longitude, setLongitude] = useState(String(position[0]));
-  const [radiusText, setRadius] = useState(String(Math.ceil(radius)));
-  const [newRadius, setNewRadius] = useState('');
+  const [radiusDraft, setRadiusDraft] = useState(() => createLengthDraft(Math.ceil(radius), units));
+  const [newRadiusDraft, setNewRadiusDraft] = useState(() => createLengthDraft(undefined, units));
+  const currentRadiusDraft = convertLengthDraft(radiusDraft, units);
+  const currentNewRadiusDraft = convertLengthDraft(newRadiusDraft, units);
+  const radiusText = currentRadiusDraft.text;
+  const newRadius = currentNewRadiusDraft.text;
+  const enteredRadiusM = readLengthDraft(currentRadiusDraft);
+  const enteredNewRadiusM = readLengthDraft(currentNewRadiusDraft);
+  const setRadius = (text: string) => setRadiusDraft({ ...currentRadiusDraft, text });
+  const setNewRadius = (text: string) => setNewRadiusDraft({ ...currentNewRadiusDraft, text });
   const [radiusConfirmed, setRadiusConfirmed] = useState(false);
   const [anchorConfirmed, setAnchorConfirmed] = useState(false);
   const [checklist, setChecklist] = useState(false);
@@ -67,7 +82,7 @@ export default function WatchScreen({
       )
         resetConfirmations();
       if (next.sessionId !== before?.sessionId || next.radiusM !== before?.radiusM) {
-        setNewRadius(next.radiusM === undefined ? '' : String(next.radiusM));
+        setNewRadiusDraft(createLengthDraft(next.radiusM, units));
         setRadiusConfirmed(false);
       }
       previous.current = next;
@@ -88,7 +103,7 @@ export default function WatchScreen({
         void setLocal('last-watch', next).catch(() => {});
       }
     },
-    [resetConfirmations],
+    [resetConfirmations, units],
   );
 
   useEffect(() => {
@@ -195,7 +210,7 @@ export default function WatchScreen({
         timestamp: Date.now(),
       });
     });
-  const shownRadius = status?.radiusM ?? Number(radiusText);
+  const shownRadius = status?.radiusM ?? enteredRadiusM;
   const lastFix = status?.lastFix;
   const fixAge = lastFix ? Date.now() - lastFix.timestamp : Infinity;
   const showPosition = Boolean(
@@ -235,6 +250,9 @@ export default function WatchScreen({
 
   return (
     <ScrollView
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
       contentContainerStyle={{
         padding: width < 700 ? 16 : 24,
         paddingBottom: 32,
@@ -430,6 +448,7 @@ export default function WatchScreen({
           </Notice>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
             <Field
+              signed
               label="Anchor latitude"
               value={latitude}
               onChange={(value) => {
@@ -438,6 +457,7 @@ export default function WatchScreen({
               }}
             />
             <Field
+              signed
               label="Anchor longitude"
               value={longitude}
               onChange={(value) => {
@@ -460,12 +480,12 @@ export default function WatchScreen({
             label="Alarm radius"
             value={radiusText}
             numeric
-            suffix="m"
+            suffix={lengthInputUnit(units)}
             onChange={(value) => {
               setRadius(value);
               setAnchorConfirmed(false);
             }}
-            help="Metres. Set from your actual anchor, deployed rode and reviewed swing space; this is not a suggested safe clearance."
+            help="Set from your actual anchor, deployed rode and reviewed swing space; this is not a suggested safe clearance."
           />
           <Check
             label="I verified the actual anchor position and alarm radius."
@@ -544,19 +564,36 @@ export default function WatchScreen({
             disabled={busy || !anchorConfirmed || !checklist || !tested || !heard || !permissions}
             onPress={() =>
               void run(async () => {
-                if (!latitude.trim() || !longitude.trim() || !radiusText.trim())
-                  throw new Error('Enter the verified anchor coordinates and alarm radius.');
+                const anchor = {
+                  latitude: parseInputDecimal(latitude),
+                  longitude: parseInputDecimal(longitude),
+                };
+                if (
+                  !Number.isFinite(anchor.latitude) ||
+                  !Number.isFinite(anchor.longitude) ||
+                  Math.abs(anchor.latitude) > 90 ||
+                  Math.abs(anchor.longitude) > 180
+                )
+                  throw new Error('Enter valid, verified anchor coordinates.');
+                if (
+                  !Number.isFinite(enteredRadiusM) ||
+                  enteredRadiusM < 10 ||
+                  enteredRadiusM > 10000
+                )
+                  throw new Error(
+                    `Alarm radius must be between ${depth(10, units)} and ${depth(10000, units)}.`,
+                  );
                 await Watch.arm({
-                  anchor: { latitude: Number(latitude), longitude: Number(longitude) },
-                  radiusM: Number(radiusText),
+                  anchor,
+                  radiusM: enteredRadiusM,
                   anchorConfirmed: true,
                   checklistConfirmed: true,
                   testAlarmConfirmed: true,
                 });
                 if (simulation)
                   Watch.injectSimulationFix({
-                    latitude: Number(latitude),
-                    longitude: Number(longitude),
+                    latitude: anchor.latitude,
+                    longitude: anchor.longitude,
                     accuracyM: 3,
                     timestamp: Date.now(),
                   });
@@ -577,7 +614,7 @@ export default function WatchScreen({
             label="New alarm radius"
             value={newRadius}
             numeric
-            suffix="m"
+            suffix={lengthInputUnit(units)}
             onChange={(value) => {
               setNewRadius(value);
               setRadiusConfirmed(false);
@@ -593,8 +630,15 @@ export default function WatchScreen({
             disabled={busy || !radiusConfirmed || !statusIsCurrent}
             onPress={() =>
               void run(async () => {
-                if (!newRadius.trim()) throw new Error('Enter the new alarm radius.');
-                await Watch.updateRadius(Number(newRadius), true);
+                if (
+                  !Number.isFinite(enteredNewRadiusM) ||
+                  enteredNewRadiusM < 10 ||
+                  enteredNewRadiusM > 10000
+                )
+                  throw new Error(
+                    `Alarm radius must be between ${depth(10, units)} and ${depth(10000, units)}.`,
+                  );
+                await Watch.updateRadius(enteredNewRadiusM, true);
                 setRadiusConfirmed(false);
               })
             }

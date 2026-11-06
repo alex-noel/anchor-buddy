@@ -29,8 +29,8 @@ export default function MapLayersSheet({
           onChange={(depth) => onChange({ ...layers, depth })}
         />
         <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
-          Blue shading and charted lower–upper depth bounds in metres. Unmapped water has no assumed
-          depth.
+          Available charted depth bounds in metres. The worldwide GEBCO layer is a coarse online
+          overview, not navigational depth evidence. It is never used to calculate clearance.
         </Text>
       </View>
       <View style={{ gap: 5 }}>
@@ -40,8 +40,9 @@ export default function MapLayersSheet({
           onChange={(bedding) => onChange({ ...layers, bedding })}
         />
         <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
-          Labelled sand, mud, mixed ground or rock. Choose preferred seabed in search settings or
-          Advanced filters.
+          Available sand, mud, rock, gravel, clay, silt, shell, grass and mixed ground evidence.
+          Select multiple preferred seabeds in search settings or Advanced filters. Areas without
+          source evidence remain unknown.
         </Text>
       </View>
       <View style={{ gap: 5 }}>
@@ -51,8 +52,8 @@ export default function MapLayersSheet({
           onChange={(marks) => onChange({ ...layers, marks })}
         />
         <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
-          Charted navigation marks shown separately from mooring buoys. A hidden mark remains in the
-          source data.
+          Available charted marks plus OpenSeaMap community marks while online. Community coverage
+          can be incomplete. Hiding this layer does not remove hazards from assessment checks.
         </Text>
       </View>
       <Text style={{ fontSize: 12, color: c.muted, lineHeight: 20 }}>

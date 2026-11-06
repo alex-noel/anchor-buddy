@@ -1,4 +1,4 @@
-import type { RegionPack, SearchRequest, VesselProfile } from './types.ts';
+import { BEDDINGS, type RegionPack, type SearchRequest, type VesselProfile } from './types.ts';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -190,9 +190,22 @@ export function validateSearch(value: unknown): string[] {
     errors.push('Deployed rode must be between 1 and 1000 metres.');
   if (
     value.preferredBedding !== undefined &&
-    !['any', 'sand', 'mud', 'mixed', 'rock', 'unknown'].includes(String(value.preferredBedding))
+    !['any', ...BEDDINGS].includes(String(value.preferredBedding))
   )
-    errors.push('Preferred seabed must be any, sand, mud, mixed, rock or unknown.');
+    errors.push('Preferred seabed must be any or a supported seabed type.');
+  if (
+    value.preferredBeddings !== undefined &&
+    (!Array.isArray(value.preferredBeddings) ||
+      value.preferredBeddings.length > BEDDINGS.length ||
+      value.preferredBeddings.some(
+        (bedding) =>
+          typeof bedding !== 'string' || !(BEDDINGS as readonly string[]).includes(bedding),
+      ) ||
+      new Set(value.preferredBeddings).size !== value.preferredBeddings.length)
+  )
+    errors.push(
+      'Preferred seabeds must be a list of unique supported types; an empty list means any seabed.',
+    );
   if (!['overnight', 'daytime'].includes(String(value.visitMode)))
     errors.push('Visit mode must be overnight or daytime.');
   return errors;
@@ -501,7 +514,7 @@ export function validateRegionPack(value: unknown): string[] {
         !['marina', 'dock', 'mooring', 'anchorage'].includes(String(item.kind)) ||
         !['free', 'paid', 'unknown'].includes(String(item.feeStatus)) ||
         !['available', 'unavailable', 'unknown'].includes(String(item.availability)) ||
-        !['sand', 'mud', 'mixed', 'rock', 'unknown'].includes(String(item.holding)) ||
+        !(BEDDINGS as readonly string[]).includes(String(item.holding)) ||
         ![true, false, null].includes(item.overnightAllowed as boolean | null) ||
         !sourceIds(item.sourceIds) ||
         !Array.isArray(item.facilities) ||
@@ -554,7 +567,7 @@ export function validateRegionPack(value: unknown): string[] {
     for (const item of value.holdingAreas)
       if (
         !record(item) ||
-        !['sand', 'mud', 'mixed', 'rock', 'unknown'].includes(String(item.holding)) ||
+        !(BEDDINGS as readonly string[]).includes(String(item.holding)) ||
         !Array.isArray(item.compatibleAnchorTypes) ||
         !item.compatibleAnchorTypes.every((t) => typeof t === 'string') ||
         typeof item.reviewed !== 'boolean'

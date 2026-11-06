@@ -5,3 +5,4 @@ export * from './cost.ts';
 export * from './engine.ts';
 export * from './demo.ts';
 export * from './format.ts';
+export * from './seabed.ts';

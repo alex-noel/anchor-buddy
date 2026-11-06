@@ -3,7 +3,9 @@ import { ScrollView, Text, View } from 'react-native';
 import type { RegionPack, UnitSystem } from '@anchor-buddy/domain';
 import { Button, Card, Icon, Notice } from '../components/ui';
 import { colors as c, type as typography } from '../theme';
-import { depth, money } from '../lib/units';
+import { depth, money, localTime } from '../lib/units';
+import type { MapArea } from '../lib/worldMapsCore';
+import type { RegionalData } from '../lib/regionalDataCore';
 import { stayLabel, type SavedSearch } from '../lib/workspace';
 export default function SavedScreen({
   searches,
@@ -15,6 +17,14 @@ export default function SavedScreen({
   onMap,
   onSettings,
   onSearch,
+  mapAreas,
+  dataRegions,
+  onDownloadMap,
+  onOpenMap,
+  onResumeMap,
+  onDeleteMap,
+  onOpenRegion,
+  onDeleteRegion,
 }: {
   searches: SavedSearch[];
   pack: RegionPack;
@@ -25,6 +35,14 @@ export default function SavedScreen({
   onMap: () => void;
   onSettings: () => void;
   onSearch: () => void;
+  mapAreas: MapArea[];
+  dataRegions: RegionalData[];
+  onDownloadMap: () => void;
+  onOpenMap: (area: MapArea) => void;
+  onResumeMap: (area: MapArea) => void;
+  onDeleteMap: (id: string) => void;
+  onOpenRegion: (data: RegionalData) => void;
+  onDeleteRegion: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   return (
@@ -42,8 +60,11 @@ export default function SavedScreen({
           Saved
         </Text>
         <Text style={{ fontSize: 13, lineHeight: 20, color: c.muted }}>
-          Search snapshots and downloaded regional maps stay on this device.
+          Search results, saved map areas and cached evidence on this device.
         </Text>
+        <Button onPress={onDownloadMap} icon="download">
+          Download map area
+        </Button>
       </View>
       <View style={{ gap: 12 }}>
         <Text accessibilityRole="header" style={{ fontSize: 17, fontWeight: '600', color: c.ink }}>
@@ -73,7 +94,7 @@ export default function SavedScreen({
                   <Text style={{ fontSize: 12, color: c.muted }}>{stayLabel(saved.search)}</Text>
                   <Text style={{ fontSize: 12, color: c.muted }}>
                     {saved.results.length} results · {saved.vesselName} · Saved{' '}
-                    {new Date(saved.savedAt).toLocaleDateString()}
+                    {localTime(saved.savedAt)}
                   </Text>
                 </View>
               </View>
@@ -95,9 +116,8 @@ export default function SavedScreen({
               {expanded === saved.id ? (
                 <View style={{ gap: 12 }}>
                   <Notice>
-                    Saved evidence from {new Date(saved.savedAt).toLocaleString()}. These are
-                    historical results; open and reassess with the current vessel and available data
-                    before planning.
+                    Saved evidence from {localTime(saved.savedAt)}. These are historical results;
+                    open and reassess with the current vessel and available data before planning.
                   </Notice>
                   {saved.results.map((result) => (
                     <View
@@ -129,36 +149,186 @@ export default function SavedScreen({
       </View>
       <View style={{ gap: 12 }}>
         <Text accessibilityRole="header" style={{ fontSize: 17, fontWeight: '600', color: c.ink }}>
-          Downloaded maps & analysis
+          Saved maps · {mapAreas.length}
         </Text>
-        <Card>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <Icon name="map" color={c.blue} />
-            <View style={{ flex: 1, gap: 6 }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: c.ink }}>
-                {savedAt ? pack.name : 'No downloaded area'}
-              </Text>
-              <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
-                {savedAt
-                  ? 'Analysis saved ' +
-                    new Date(savedAt).toLocaleString() +
-                    '. Chart download status is available in Settings.'
-                  : 'Save regional analysis or download an approved map from Settings.'}
-              </Text>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-            {savedAt ? (
-              <Button small onPress={onMap} icon="map">
-                Open saved area
-              </Button>
-            ) : null}
-            <Button small secondary onPress={onSettings} icon="settings">
-              Manage downloads
+        <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+          Display maps contain geographic context. Nautical analysis and time-limited weather are
+          saved separately below.
+        </Text>
+        {!mapAreas.length ? (
+          <Card>
+            <Text style={{ fontSize: 14, color: c.ink }}>No saved map areas</Text>
+            <Text style={{ fontSize: 13, lineHeight: 20, color: c.muted }}>
+              Choose an area and detail level to download its basemap for offline use.
+            </Text>
+            <Button secondary onPress={onDownloadMap} icon="map">
+              Choose map area
             </Button>
-          </View>
-        </Card>
+          </Card>
+        ) : (
+          mapAreas.map((area) => (
+            <Card key={area.id}>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <Icon name="map" color={c.blue} />
+                <View style={{ flex: 1, gap: 6 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: c.ink }}>{area.name}</Text>
+                  <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                    {area.status === 'complete'
+                      ? 'Complete · available offline'
+                      : 'Partial download'}{' '}
+                    · {(area.bytes / 1_000_000).toFixed(1)} MB
+                  </Text>
+                  <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                    {area.completedTiles.toLocaleString()} / {area.tileCount.toLocaleString()} map
+                    tiles · Detail level {area.maxZoom}
+                  </Text>
+                  <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                    Updated {localTime(area.updatedAt)}
+                    {Date.parse(area.refreshAfter) < Date.now() ? ' · Refresh suggested' : ''}
+                  </Text>
+                </View>
+              </View>
+              {area.status === 'partial' ? (
+                <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                  {area.error || 'Some map resources are missing. Resume to complete this area.'}
+                </Text>
+              ) : null}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                {area.status === 'complete' ? (
+                  <Button small onPress={() => onOpenMap(area)} icon="map">
+                    Open map
+                  </Button>
+                ) : null}
+                {area.status === 'partial' ? (
+                  <Button small secondary onPress={() => onResumeMap(area)} icon="download">
+                    Resume download
+                  </Button>
+                ) : null}
+                <Button small secondary onPress={() => onDeleteMap(area.id)} icon="trash-2">
+                  Delete map
+                </Button>
+              </View>
+            </Card>
+          ))
+        )}
       </View>
+      <View style={{ gap: 12 }}>
+        <Text accessibilityRole="header" style={{ fontSize: 17, fontWeight: '600', color: c.ink }}>
+          Cached regional data · {dataRegions.length}
+        </Text>
+        {!dataRegions.length ? (
+          <Card>
+            <Text style={{ fontSize: 14, color: c.ink }}>No cached regional data</Text>
+            <Text style={{ fontSize: 13, lineHeight: 20, color: c.muted }}>
+              Online searches cache available places and weather. Source coverage and expiry dates
+              are retained for offline use.
+            </Text>
+            <Button secondary small onPress={onSearch} icon="search">
+              Search an area
+            </Button>
+          </Card>
+        ) : (
+          dataRegions.map((data) => {
+            const expired = Date.parse(data.pack.validUntil) < Date.now();
+            const weatherEnd = data.pack.weather.length
+              ? new Date(
+                  Math.max(...data.pack.weather.map((interval) => Date.parse(interval.validUntil))),
+                ).toISOString()
+              : null;
+            return (
+              <Card key={data.pack.id}>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <Icon name="database" color={c.blue} />
+                  <View style={{ flex: 1, gap: 6 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: c.ink }}>
+                      {data.pack.name}
+                    </Text>
+                    <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                      {data.pack.places.length} places ·{' '}
+                      {data.pack.weather.length
+                        ? `${data.pack.weather.length} forecast intervals`
+                        : 'Weather unavailable'}
+                      {data.partial ? ' · Partial source coverage' : ''}
+                    </Text>
+                    <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                      {data.savedAt
+                        ? `Saved ${localTime(data.savedAt)}`
+                        : `Retrieved ${localTime(data.pack.generatedAt)}`}
+                    </Text>
+                    <Text
+                      style={{ fontSize: 12, lineHeight: 19, color: expired ? c.red : c.muted }}
+                    >
+                      {expired ? 'Evidence expired' : 'Evidence valid until'}{' '}
+                      {localTime(data.pack.validUntil)}
+                    </Text>
+                    {weatherEnd ? (
+                      <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                        Forecast ends {localTime(weatherEnd)}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                  <Button small onPress={() => onOpenRegion(data)} icon="map">
+                    Open area & data
+                  </Button>
+                  <Button
+                    small
+                    secondary
+                    onPress={() => onDeleteRegion(data.pack.id)}
+                    icon="trash-2"
+                  >
+                    Delete cached data
+                  </Button>
+                </View>
+              </Card>
+            );
+          })
+        )}
+      </View>
+      {savedAt && !dataRegions.some((data) => data.pack.id === pack.id) ? (
+        <View style={{ gap: 12 }}>
+          <Text
+            accessibilityRole="header"
+            style={{ fontSize: 17, fontWeight: '600', color: c.ink }}
+          >
+            Regional analysis snapshot
+          </Text>
+          <Card>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <Icon name="layers" color={c.blue} />
+              <View style={{ flex: 1, gap: 6 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: c.ink }}>{pack.name}</Text>
+                <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                  {pack.validation.status === 'reviewed'
+                    ? 'Reviewed regional analysis'
+                    : pack.validation.status === 'synthetic'
+                      ? 'Optional sample analysis'
+                      : 'Unreviewed regional analysis'}{' '}
+                  · Saved {localTime(savedAt)}
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    lineHeight: 19,
+                    color: Date.parse(pack.validUntil) < Date.now() ? c.red : c.muted,
+                  }}
+                >
+                  Evidence valid until {localTime(pack.validUntil)}
+                </Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              <Button small onPress={onMap} icon="map">
+                Open saved analysis
+              </Button>
+              <Button small secondary onPress={onSettings} icon="settings">
+                Manage regional packs
+              </Button>
+            </View>
+          </Card>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }

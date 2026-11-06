@@ -17,6 +17,13 @@ import { StatusBadge } from '../components/ResultCard';
 import { colors as c } from '../theme';
 import { depth } from '../lib/units';
 import Chart from '../components/Chart';
+import {
+  parseInputDecimal,
+  createLengthDraft,
+  convertLengthDraft,
+  readLengthDraft,
+  lengthInputUnit,
+} from '../lib/inputNumbers';
 
 export default function PlannerScreen({
   candidate,
@@ -46,15 +53,17 @@ export default function PlannerScreen({
   const { width } = useWindowDimensions();
   const [lat, setLat] = useState(String(candidate.position[1]));
   const [lon, setLon] = useState(String(candidate.position[0]));
-  const [rode, setRode] = useState(
-    search.deployedRodeM === undefined ? '' : String(search.deployedRodeM),
-  );
+  const [rodeDraft, setRodeDraft] = useState(() => createLengthDraft(search.deployedRodeM, units));
+  const currentRodeDraft = convertLengthDraft(rodeDraft, units);
+  const rode = currentRodeDraft.text;
+  const deployedRodeM = readLengthDraft(currentRodeDraft);
+  const setRode = (text: string) => setRodeDraft({ ...currentRodeDraft, text });
   const [checks, setChecks] = useState<boolean[]>([false, false, false, false]);
   const [error, setError] = useState('');
   const effectiveSearch = useMemo<SearchRequest>(() => {
     const { deployedRodeM: _priorRode, ...preferences } = search;
-    return { ...preferences, ...(rode.trim() ? { deployedRodeM: Number(rode) } : {}) };
-  }, [search, rode]);
+    return { ...preferences, ...(rode.trim() ? { deployedRodeM } : {}) };
+  }, [search, rode, deployedRodeM]);
   const pin = useMemo<Candidate>(
     () => ({
       ...candidate,
@@ -62,7 +71,7 @@ export default function PlannerScreen({
       name: 'Your planned anchor position',
       kind: 'generated',
       place: undefined,
-      position: [Number(lon), Number(lat)],
+      position: [parseInputDecimal(lon), parseInputDecimal(lat)],
     }),
     [candidate, lon, lat],
   );
@@ -70,16 +79,19 @@ export default function PlannerScreen({
     if (
       !lat.trim() ||
       !lon.trim() ||
-      !Number.isFinite(Number(lat)) ||
-      !Number.isFinite(Number(lon))
+      !Number.isFinite(parseInputDecimal(lat)) ||
+      !Number.isFinite(parseInputDecimal(lon))
     ) {
       return {
         assessment: null,
         error: 'Enter a complete latitude and longitude to reassess this position.',
       };
     }
-    if (rode.trim() && !Number.isFinite(Number(rode))) {
-      return { assessment: null, error: 'Enter the deployed rode length as a number of metres.' };
+    if (rode.trim() && !Number.isFinite(deployedRodeM)) {
+      return {
+        assessment: null,
+        error: `Enter the deployed rode length as a number of ${lengthInputUnit(units) === 'ft' ? 'feet' : 'metres'}.`,
+      };
     }
     try {
       return {
@@ -99,7 +111,19 @@ export default function PlannerScreen({
         error: cause instanceof Error ? cause.message : 'This position could not be assessed.',
       };
     }
-  }, [pin, vessel, effectiveSearch, pack, context, depthAllowancePercent, rode, lat, lon]);
+  }, [
+    pin,
+    vessel,
+    effectiveSearch,
+    pack,
+    context,
+    depthAllowancePercent,
+    rode,
+    deployedRodeM,
+    lat,
+    lon,
+    units,
+  ]);
   const assessment = calculation.assessment;
   const elapsedEvidence = assessment?.reasons.some(
     (reason) => reason.code === 'elapsed_stay' || reason.code.startsWith('currently_'),
@@ -111,6 +135,9 @@ export default function PlannerScreen({
   };
   return (
     <ScrollView
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
       contentContainerStyle={{
         padding: width < 700 ? 16 : 24,
         paddingBottom: 32,
@@ -162,8 +189,8 @@ export default function PlannerScreen({
           double-click in the browser, to adjust the drop point.
         </Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          <Field label="Latitude" value={lat} onChange={change(setLat)} />
-          <Field label="Longitude" value={lon} onChange={change(setLon)} />
+          <Field signed label="Latitude" value={lat} onChange={change(setLat)} />
+          <Field signed label="Longitude" value={lon} onChange={change(setLon)} />
         </View>
         <Button
           secondary
@@ -243,7 +270,7 @@ export default function PlannerScreen({
           value={rode}
           onChange={change(setRode)}
           numeric
-          suffix="m"
+          suffix={lengthInputUnit(units)}
           help="Optional. Recalculates the full footprint; confirm the actual deployed length on arrival."
         />
         <Text style={{ fontSize: 12, color: c.muted }}>

@@ -40,10 +40,14 @@ export function SelectField({
       </Pressable>
       {open ? (
         <ScrollView
+          accessibilityLabel={`${label} options`}
           nestedScrollEnabled
+          showsVerticalScrollIndicator
           keyboardShouldPersistTaps="handled"
           style={{
             maxHeight: 240,
+            flexGrow: 0,
+            flexShrink: 0,
             borderWidth: 1,
             borderColor: c.line,
             borderRadius: 10,

@@ -1,5 +1,13 @@
 import React, { type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View, type ViewStyle } from 'react-native';
+import {
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type ViewStyle,
+} from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 import { colors as c } from '../theme';
 export type IconName = React.ComponentProps<typeof Feather>['name'];
@@ -85,6 +93,7 @@ export function Field({
   onChange,
   suffix,
   numeric = false,
+  signed = false,
   help,
 }: {
   label: string;
@@ -92,6 +101,7 @@ export function Field({
   onChange: (v: string) => void;
   suffix?: string;
   numeric?: boolean;
+  signed?: boolean;
   help?: string;
 }) {
   return (
@@ -102,7 +112,20 @@ export function Field({
           accessibilityLabel={label}
           value={value}
           onChangeText={onChange}
-          keyboardType={numeric ? 'decimal-pad' : 'default'}
+          keyboardType={
+            signed
+              ? Platform.OS === 'ios'
+                ? 'numbers-and-punctuation'
+                : Platform.OS === 'android'
+                  ? 'numeric'
+                  : 'default'
+              : numeric
+                ? 'decimal-pad'
+                : 'default'
+          }
+          autoCorrect={false}
+          spellCheck={false}
+          returnKeyType="done"
           autoCapitalize="none"
           style={s.input}
         />

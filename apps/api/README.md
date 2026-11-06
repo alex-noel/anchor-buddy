@@ -18,6 +18,9 @@ The web preview is allowed from exact localhost/127.0.0.1 origins on ports 8081 
 | `GET /health`                                    | Process status and assistant/release gates                                                                |
 | `GET /v1/providers`                              | Public capability, attribution, offline and authentication metadata                                       |
 | `GET /v1/regions`                                | Published pack identifiers plus explicitly synthetic demo                                                 |
+| `POST /v1/regions/discover`                      | Bounded worldwide real-source discovery; partial/unreviewed RegionPack and individual provider statuses   |
+| `GET /v1/geocode?q=Marseille`                    | Explicitly submitted place-name search; cached and throttled Nominatim adapter                            |
+| `GET /v1/maps/resource?url=...`                  | Fixed OpenFreeMap-host proxy for user-selected offline map downloads; no arbitrary URL forwarding         |
 | `GET /v1/demo`                                   | Synthetic pack, vessel and default search for UI development                                              |
 | `POST /v1/search`                                | `{regionId, version?, vessel, search, options?}`; returns shared-domain `SearchResult`                    |
 | `POST /v1/estimate`                              | Same request plus `placeId`; itemized estimate with separate availability                                 |
@@ -27,7 +30,9 @@ The web preview is allowed from exact localhost/127.0.0.1 origins on ports 8081 
 | `POST /v1/tides`                                 | Reviewed station mapping lookup, metric/GMT CO-OPS predictions; disabled by absence of validated mappings |
 | `POST /v1/assistant`                             | `503 PARTNER_ACCESS_PENDING`; no separately billed API fallback                                           |
 
-Use `regionId: "florida-keys-demo"` to exercise search. Other regions require a published pack with a domain `RegionPack` assessment artifact, a reviewed status and all release gates. Client-provided raw packs are not accepted by search. The request structures are exported by `@anchor-buddy/domain`. Limits are 30 nautical miles, seven days, at least 100-metre generation spacing and at most 2,000 generated candidates per request. Distances are straight-line distances, not routes.
+Use `regionId: "florida-keys-demo"` to exercise search. Published regions require a domain `RegionPack` assessment artifact, reviewed status and all release gates. Recent server-created live discovery snapshots are also accepted, retaining their unreviewed status and missing critical evidence. They cannot yield a passing recommendation. Client-provided raw packs are not accepted by search. The request structures are exported by `@anchor-buddy/domain`. Assessment API limits are 30 nautical miles, seven days, at least 100-metre generation spacing and at most 2,000 generated candidates per request. Discovery permits stays up to 30 days but never invents forecasts beyond the actual provider horizon. Distances are straight-line distances, not routes.
+
+See [live data connections and policies](LIVE_DATA.md) for real global weather/places, source licenses, response contracts, development limits, commercial deployment configuration and the read-only smoke script. Live data does not fill missing reviewed chart, habitat, permission, tariff or station evidence.
 
 The weather route preserves each grid interval, original unit and `null`; it never turns missing waves, swell or current into calm conditions. It is an ingestion/inspection endpoint. A forecast must be assembled into the domain snapshot with independently reviewed tide/current relationships and coverage before it can produce real assessments. CO-OPS astronomical predictions are not weather-driven total water levels. There are deliberately no default “nearest station” mappings.
 

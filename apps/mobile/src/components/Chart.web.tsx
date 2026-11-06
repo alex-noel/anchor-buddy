@@ -31,7 +31,7 @@ export default function Chart(props: ChartProps) {
   useEffect(() => {
     if (!div.current) return;
     try {
-      maplibregl.setWorkerUrl('/maplibre/maplibre-gl-worker.mjs');
+      maplibregl.setWorkerUrl(`/maplibre/${maplibregl.getVersion()}/maplibre-gl-worker.mjs`);
       const m = new maplibregl.Map({
         container: div.current,
         style: buildMapStyle(
@@ -44,6 +44,7 @@ export default function Chart(props: ChartProps) {
           refs.current.searchRadiusNm
             ? { origin: refs.current.origin, radiusNm: refs.current.searchRadiusNm }
             : undefined,
+          refs.current.showMarks,
         ) as StyleSpecification,
         center: refs.current.origin,
         zoom: radiusZoom(
@@ -103,25 +104,21 @@ export default function Chart(props: ChartProps) {
   useEffect(() => {
     const m = map.current;
     if (!m) return;
-    const update = () =>
-      m.setStyle(
-        buildMapStyle(
-          props.pack,
-          props.assessments.find((a) => a.id === props.selectedId),
-          props.onlineBasemap,
-          props.showDepth,
-          base,
-          props.showBedding,
-          props.searchRadiusNm
-            ? { origin: props.origin, radiusNm: props.searchRadiusNm }
-            : undefined,
-        ) as StyleSpecification,
-      );
-    if (m.isStyleLoaded()) update();
-    else m.once('style.load', update);
-    return () => {
-      m.off('style.load', update);
-    };
+    // isStyleLoaded also waits for source data. style.load may already have fired
+    // while a source is pending, so waiting for it here can discard an offline style.
+    m.setStyle(
+      buildMapStyle(
+        props.pack,
+        props.assessments.find((a) => a.id === props.selectedId),
+        props.onlineBasemap,
+        props.showDepth,
+        base,
+        props.showBedding,
+        props.searchRadiusNm ? { origin: props.origin, radiusNm: props.searchRadiusNm } : undefined,
+        props.showMarks,
+      ) as StyleSpecification,
+      { diff: m.isStyleLoaded() === true },
+    );
   }, [
     props.pack,
     props.selectedId,
@@ -129,6 +126,7 @@ export default function Chart(props: ChartProps) {
     props.onlineBasemap,
     props.showDepth,
     props.showBedding,
+    props.showMarks,
     props.searchRadiusNm,
     props.origin,
     base,

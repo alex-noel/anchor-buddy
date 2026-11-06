@@ -1,55 +1,75 @@
 # Anchor Buddy
 
-Anchor Buddy is a React Native anchoring planner for iOS and Android, with a browser development preview. It combines a vessel profile, a timed search, conservative depth/rode/footprint checks, place and price comparisons, an anchoring workflow, and a native supplemental anchor watch.
+Anchor Buddy is a React Native anchoring planner for iOS and Android, with a browser development preview and an exported web build. It combines a vessel profile, a timed search, conservative depth/rode/footprint checks, place and price comparisons, an anchoring workflow, and a native supplemental anchor watch.
 
-**This repository is a development implementation, not a released nautical product. The bundled Florida Keys region is entirely synthetic. Its depths, hazards, weather, tides, places, prices and permissions are invented. Do not use its results for navigation, anchoring or docking.** A geographical basemap does not make the overlaid demo evidence real.
+**This repository is a development implementation, not a released nautical product. Explore starts empty, with no assumed nautical coverage. Live places and weather remain incomplete evidence; no reviewed nautical region is bundled.** The optional Florida Keys sample is available only through **Settings → Load optional sample workspace**. Its depths, hazards, forecasts, places, prices and permissions are invented and must not be used for real navigation, anchoring or docking.
 
 ## What is implemented
 
-| Area                  | Delivered behavior                                                                                                                                                                       | Release limitation                                                                                                                             |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Planner               | Initial setup/tour, empty Explore, saved searches, map/list views, vessel/search defaults, place/seabed/fee filters, sorting, result details and nested anchor plans                     | The bundled region and equipment guidance are demonstrations; approaches and berth availability remain separate                                |
-| Assessment            | Shared deterministic TypeScript engine, whole-stay checks, conservative depth bounds, complete footprint exclusions, explicit missing evidence, itemized tariffs and deeper alternatives | Requires reviewed region, station relationships, equipment guidance and field validation before live recommendations                           |
-| Offline data          | Local profiles and dated snapshots; staged, size/SHA-256-checked pack installation that retains the previous active pack on failure                                                      | No real reviewed regional pack is supplied; forecasts and notices still expire offline                                                         |
-| Charts                | MapLibre Native/GL; optional depth, seabed and marks layers; map-based search centre/radius; analysis geometry separate from display                                                     | Public context basemaps are not nautical charts. Native tile caching requires an approved, licensed pack/style; web saves analysis assets only |
-| Anchor watch          | Swift/CoreLocation and Kotlin location foreground-service implementations; local alerts, explicit arming, fixed anchor, accuracy/freshness checks and interruption state                 | Source is implemented and autolinking checked; full native builds, overnight device trials and on-water validation remain outstanding          |
-| Backend and ingestion | Fastify API; NWS grid/alert adapter; guarded CO-OPS adapter; NOAA ENC/GDAL ingestion; immutable packs; PostGIS indexing and container stack                                              | ENC extraction alone cannot establish safe holding, complete restrictions, station mappings, tariffs or forecast coverage                      |
-| ChatGPT               | Capability boundary and disabled assistant endpoint                                                                                                                                      | Commercial partner approval and approved mobile authorization are unavailable; no working subscription sign-in is shipped                      |
+| Area                      | Delivered behavior                                                                                                                                                                       | Release limitation                                                                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Planner                   | Initial setup/tour, empty Explore, submitted place-name/map search, multiple seabed preferences, map/list results, filters, saved searches and nested anchor plans                       | Public-source places can lack depth, overnight permission, vessel limits, prices and availability                                                       |
+| Assessment                | Shared deterministic TypeScript engine, whole-stay checks, conservative depth bounds, complete footprint exclusions, explicit missing evidence, itemized tariffs and deeper alternatives | Real passing recommendations require reviewed nautical coverage, station relationships, equipment guidance and field validation                         |
+| Offline data              | Local profiles, dated search snapshots, regional places/weather caches and staged size/SHA-256-checked reviewed pack installation                                                        | No reviewed nautical pack is supplied; saving evidence never extends forecast or notice validity                                                        |
+| Map display and downloads | MapLibre Native/GL, worldwide OpenFreeMap display maps, bounded offline area downloads on native/web, resumable partial transfers and deletion                                           | Display maps are not nautical analysis. GEBCO bathymetry and OpenSeaMap marks are online context layers; native rendering still needs device validation |
+| Anchor watch              | Swift/CoreLocation and Kotlin location foreground-service implementations, local alerts, explicit arming, fixed anchor, accuracy/freshness checks and interruption state                 | Source is implemented and autolinking checked; full native builds, overnight device trials and on-water validation remain outstanding                   |
+| Backend and ingestion     | Fastify API, submitted geocoding, worldwide place/weather adapters, NWS grids/alerts, guarded CO-OPS, NOAA ENC/GDAL ingestion, immutable packs and PostGIS containers                    | Public providers can fail or lack coverage. Extraction/discovery alone cannot establish holding, restrictions, station mappings or tariffs              |
+| ChatGPT                   | Capability boundary and disabled assistant endpoint                                                                                                                                      | Commercial partner approval and approved mobile authorization are unavailable; no working subscription sign-in is shipped                               |
 
 Booking, payments and turn-by-turn navigation are outside this implementation. Search distance is straight-line distance. A “passes configured checks” result is not a guarantee of safety.
 
 ## Run the development preview
 
-Use Node.js 24 and npm. Python 3.11+ is required for ingestion tests. The core demo does not require an account, database or API credentials.
+Use Node.js 24 and npm. Python 3.11+ is required for ingestion tests. Run from the repository root. Core features and public-data development requests need no user account, database or API credentials.
+
+Install dependencies once, then start the API:
 
 ```sh
 npm ci
+npm run api
+```
+
+In a second terminal, from the same project directory:
+
+```sh
 npm run web
 ```
 
-Open the address printed by Expo, normally `http://localhost:8081`. The web scripts prepare the local MapLibre worker assets. The bundled sample works without starting the backend. Open **Anchor watch** in the header to explicitly enable its simulator; it does not monitor a vessel or produce a real native alarm.
+Open the address printed by Expo, normally `http://localhost:8081`. Keep both processes running for live location searches, area discovery and browser map downloads. The web scripts prepare the local MapLibre worker assets. Initial setup configures the vessel and search defaults; Explore has no results until you submit a search.
 
-To run the API in another terminal:
-
-```sh
-npm run api
-```
+For UI testing without the API, explicitly load the optional sample workspace from Settings. Open **Anchor watch** in the header to enable its simulator; it does not monitor a vessel or produce a native alarm.
 
 The default API address is `http://localhost:3001`; [the API README](apps/api/README.md) lists routes and behavior. Export environment settings from [the API example](apps/api/.env.example) through the shell or deployment environment; the server does not automatically load `.env` files. If a restricted environment blocks the `tsx watch` IPC socket, use `npm start --workspace=@anchor-buddy/api` without the watcher.
 
 Configure the API address under **Settings → Data connection**, or set `EXPO_PUBLIC_API_URL` before starting Expo. Android Emulator can use `http://10.0.2.2:3001`. A physical device needs a reachable trusted HTTPS development endpoint; `localhost` on the phone refers to the phone. Remote provider addresses must use HTTPS.
 
+With the API running, live area discovery requests worldwide community boating places and navigation marks from OpenStreetMap, global wind forecasts from MET Norway, and NWS grids/active alerts in US coverage. The live discovery radius is limited to **25 nautical miles**. Source availability is not guaranteed: public Overpass requests failed during implementation checks, so live place retrieval has not been established as reliable. **Area data & coverage** shows individual provider results and failures; the app does not substitute sample places. A live discovery snapshot cannot establish safe anchoring without independently reviewed depths, hazards, permissions, tides and other critical evidence. Public data access requires no user account. Optional Open-Meteo waves remain disabled until the operator explicitly configures a permitted non-commercial, commercial or self-hosted deployment.
+
+Read [live source setup and policies](apps/api/LIVE_DATA.md) before deployment. Production place lookup needs an explicitly configured Overpass endpoint. **The public Nominatim geocoder permits only submitted searches, never autocomplete or systematic queries, with attribution, caching and a maximum of one request per second across the whole app.** The gateway enforces spacing within one process; scaling requires a shared limiter or another configured provider. Its public-service use is a deliberate developer choice governed by [Nominatim’s policy](https://operations.osmfoundation.org/policies/nominatim/).
+
 ## Local app walkthrough
 
 1. **Initial setup:** choose display units, configure the vessel and anchor equipment, and save search defaults. Complete or skip the app tour. Reopen setup or the tour from **Settings → Help**.
-2. **Explore:** starts with no active search. Choose **Plan a stay** or **New search**. Tap the map to set the centre, adjust its radius, choose local dates/hours, and review depth, seabed and operating limits before searching.
-3. **Compare results:** use **Quick filters** and **Advanced filters & sorting**. Map/list controls share the same row. Open **Layers** on the map to switch depth, seabed and marks; display choices do not remove evidence from assessment checks.
+2. **Explore:** starts with no active search. Choose **New search**, enter a town/harbour/address and press **Find location**, or tap the map to choose the centre. Adjust the radius, local dates/hours, depth and operating limits. Select multiple preferred seabeds with the visible checkboxes; **All seabeds — no preference** removes this preference without relaxing safety checks. Live discovery supports up to 25 nm; reviewed/downloaded-data searches support up to 50 nm where coverage exists.
+3. **Compare results:** use **Quick filters** and **Advanced filters & sorting**. Map/list controls share the same row. Open **Layers** to switch depth, seabed and marks. GEBCO depth imagery and OpenSeaMap marks provide display context; seabed remains unknown without reviewed evidence. Layer visibility never removes assessment checks.
 4. **Plan an anchoring stay:** open a result, review its evidence, then choose its plan action. Adjust the drop point and deployed rode, review the complete footprint, and complete arrival checks. Anchor planning is a step reached from a result, not a primary tab.
 5. **Test the watch:** continue from the plan or open the persistent **Anchor watch** header control. In the browser, enable the simulator, confirm the position/radius and checklist, check readiness, run the simulated alarm test and start it. Test drift, return inside, poor accuracy and interruption. Navigation or closing a search does not stop or recenter a watch; use **Stop watch** explicitly.
 6. **Save and close:** choose **Save results**, name the snapshot, then **Close search** to return to empty Explore. Open **Saved** to inspect the historical snapshot or **Open & reassess** using current vessel/data. Update elapsed stay dates before planning again.
-7. **Settings and offline:** edit the vessel, search defaults, units, language and map defaults in **Settings**. English is the supported language. Save analysis offline, enable offline planning and reload. Saved regional analysis appears in **Saved**; map tiles require a separately approved native download.
+7. **Download a map:** use **Download map area** in Saved, the Explore map download control, or Settings. Select the area and detail, then download. Saved lists complete/partial maps, tile progress and storage size. Resume a partial transfer, open a complete map, or delete it. Optional places/weather downloads use separate coverage and retain their original dates; they do not turn display tiles into reviewed nautical evidence.
+8. **Settings and offline:** edit the vessel, search defaults, units, language and map defaults in Settings; English is supported initially. Enable offline planning to use downloaded maps and available evidence caches. Saved separates display maps, cached regional data and analysis snapshots. Verify offline reload with the exported web build below; Metro development still needs its server. Sample data is an explicit Settings option, with a separate action to return to live data.
 
 The primary tabs are **Explore**, **Saved** and **Settings**. The watch remains a persistent header control so an ongoing session can be reached from any tab. Its monitoring status is verified independently of the selected search or anchor plan.
+
+## Test an exported web build offline
+
+```sh
+npm run export:web --workspace=@anchor-buddy/mobile
+python3 -m http.server 8082 --bind 127.0.0.1 --directory apps/mobile/dist
+```
+
+Open `http://127.0.0.1:8082` online first. The export step includes an integrity-checked service worker for the app shell; selected map downloads also store their tiles and label resources. Download a small area, enable offline planning, then test a reload without network access. Browser storage must remain available and must not be cleared or evicted. Keep the API running while making browser map downloads.
+
+This service worker applies only to **exported builds served over HTTPS or localhost**, not `npm run web`/Metro. Updating the exported app waits for previous tabs to close so shell and worker resources stay together. See [worldwide maps and offline downloads](docs/world-maps.md) for cache limits, source attribution, integrity checks and platform differences. A cached app shell does not make the browser watch a native background service.
 
 ## Build the native app
 
@@ -83,7 +103,7 @@ docker compose -f infra/compose.yaml --profile tools run --rm ingest build fixtu
 
 See [container setup](infra/README.md) and [regional ingestion](workers/ingest/README.md) for selected ENC downloads, GDAL extraction, official spatial imports, PostGIS indexing and operator publication. No real NOAA charts, complete sanctuary/USCG constraints, validated local station mappings or real marina tariffs are bundled. The published assessment snapshot is a separate reviewed artifact; raw source ingestion does not automatically create a releasable region.
 
-Saving a current area stores analysis evidence and its dates. It does not bulk-download OpenStreetMap public tiles. Approved native offline charts are a separate cache with explicit entitlement checks. Retaining a pack does not extend a forecast's validity or include newly issued notices.
+Saving an area's analysis retains evidence and its original dates. Explicit worldwide basemap downloads use OpenFreeMap with bounded area/detail, attribution and resource integrity checks; they do not bulk-download OpenStreetMap's public raster tiles. Reviewed provider charts remain a separate cache with explicit entitlement checks. Neither a display map nor a retained analysis pack extends forecast validity or includes newly issued notices. See [map downloads](docs/world-maps.md).
 
 ## Verify changes
 
@@ -97,7 +117,7 @@ npm audit
 
 Web and iOS/Android JavaScript/Hermes exports, Swift syntax parsing and Expo autolinking have been exercised during development. These checks do not establish native binary compilation or real device monitoring. Record fresh test results for each change rather than treating a past test count as release evidence. The walkthrough above covers the current app flow; native overnight/device acceptance remains outstanding.
 
-Dependency audit currently reports advisories in transitive **zod** and **deepmerge** dependencies. No compatible patched resolution was identified in the current dependency set during implementation. This is an open dependency/release issue, not a clean security audit; reassess the dependency paths and available releases before distribution. Do not force incompatible overrides merely to suppress audit output.
+During the initial implementation on **2026-10-30**, the dependency audit reported advisories in transitive **zod** and **deepmerge** dependencies, and no compatible patched resolution was identified then. This historical result is not a current security assessment. Rerun `npm audit`, reassess reachable dependency paths and use supported remediation before distribution; do not force incompatible overrides merely to suppress audit output.
 
 ## AI, privacy and project map
 
@@ -109,4 +129,4 @@ Boat profiles, preferences, saved regional evidence and watch history are local.
 - [Domain engine](packages/domain/README.md): shared types, validation, geometry, tariffs and assessments.
 - [Native anchor watch](modules/anchor-watch/README.md): bridge, Swift/Kotlin engines, simulator and device test protocol.
 - [API](apps/api/README.md), [ingestion worker](workers/ingest/README.md) and [infrastructure](infra/README.md).
-- [Architecture](docs/architecture.md) and [release gates](docs/release-checklist.md).
+- [Worldwide maps and offline downloads](docs/world-maps.md), [architecture](docs/architecture.md) and [release gates](docs/release-checklist.md).

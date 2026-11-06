@@ -8,6 +8,7 @@ import {
   type RegionPack,
 } from '@anchor-buddy/domain';
 import { colors as c } from '../theme';
+import { onlineWorldMapStyle } from '../lib/worldMapsCore';
 
 export interface ChartProps {
   pack: RegionPack;
@@ -64,6 +65,11 @@ export const beddingColors: Record<Bedding, string> = {
   mud: '#71859A',
   mixed: '#819CAF',
   rock: '#485A6D',
+  gravel: '#8D9EAD',
+  clay: '#93A5B6',
+  silt: '#A5B4C3',
+  shell: '#CCD6DF',
+  grass: '#667D8B',
   unknown: '#CCD2DA',
 };
 
@@ -207,7 +213,24 @@ export function buildMapStyle(
   base: Record<string, unknown> | null = null,
   bedding = true,
   search?: { origin: Position; radiusNm: number },
+  marks = true,
 ) {
+  base = base ?? (online ? onlineWorldMapStyle() : null);
+  const baseLayers = (base?.layers as { type?: string }[] | undefined) ?? [];
+  const firstLabel = baseLayers.findIndex((layer) => layer.type === 'symbol');
+  const split = firstLabel < 0 ? baseLayers.length : firstLabel;
+  const globalBathymetry =
+    online && depth
+      ? [
+          {
+            id: 'anchorbuddy-global-bathymetry',
+            type: 'raster',
+            source: 'anchorbuddy-gebco',
+            maxzoom: 13,
+            paint: { 'raster-opacity': 0.28, 'raster-saturation': -0.6 },
+          },
+        ]
+      : [];
   const features = pack.depths.map((d) => ({
     type: 'Feature',
     properties: { min: d.minDepthM, max: d.maxDepthM },
@@ -230,13 +253,30 @@ export function buildMapStyle(
     version: 8 as const,
     sources: {
       ...((base?.sources as Record<string, unknown>) ?? {}),
-      ...(online && !base
+      ...(online && depth
         ? {
-            osm: {
+            'anchorbuddy-gebco': {
               type: 'raster',
-              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+              tiles: [
+                'https://wms.gebco.net/mapserv?service=WMS&version=1.1.1&request=GetMap&layers=GEBCO_LATEST_2&styles=&format=image/png&srs=EPSG:3857&bbox={bbox-epsg-3857}&width=256&height=256',
+              ],
               tileSize: 256,
-              attribution: '© OpenStreetMap contributors · Basemap only',
+              maxzoom: 8,
+              attribution:
+                '<a href="https://www.gebco.net/data-products/gebco-web-services/web-map-service">GEBCO_2026 Grid</a> · Coarse display only; not for navigation',
+            },
+          }
+        : {}),
+      ...(online && marks
+        ? {
+            'anchorbuddy-seamarks': {
+              type: 'raster',
+              tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'],
+              tileSize: 256,
+              minzoom: 8,
+              maxzoom: 18,
+              attribution:
+                '© <a href="https://www.openseamap.org">OpenSeaMap</a> contributors · Community marks, incomplete coverage',
             },
           }
         : {}),
@@ -283,17 +323,9 @@ export function buildMapStyle(
     },
     layers: [
       { id: 'anchorbuddy-water', type: 'background', paint: { 'background-color': c.ocean } },
-      ...((base?.layers as object[]) ?? []),
-      ...(online && !base
-        ? [
-            {
-              id: 'anchorbuddy-basemap',
-              type: 'raster',
-              source: 'osm',
-              paint: { 'raster-opacity': 0.8, 'raster-saturation': -0.85 },
-            },
-          ]
-        : []),
+      ...baseLayers.slice(0, split),
+      ...globalBathymetry,
+      ...baseLayers.slice(split),
       ...(depth
         ? [
             {
@@ -359,6 +391,16 @@ export function buildMapStyle(
         source: 'anchorbuddy-hazards',
         paint: { 'line-color': c.muted, 'line-width': 1.2, 'line-dasharray': [2, 3] },
       },
+      ...(online && marks
+        ? [
+            {
+              id: 'anchorbuddy-global-seamarks',
+              type: 'raster',
+              source: 'anchorbuddy-seamarks',
+              minzoom: 8,
+            },
+          ]
+        : []),
       {
         id: 'anchorbuddy-search-fill',
         type: 'fill',

@@ -14,7 +14,19 @@ export type PlaceKind = 'marina' | 'dock' | 'mooring' | 'anchorage' | 'generated
 export type AssessmentStatus = 'passes' | 'excluded' | 'insufficient_evidence';
 export type FeeStatus = 'free' | 'paid' | 'unknown';
 export type UnitSystem = 'nautical' | 'metric' | 'imperial';
-export type Bedding = 'sand' | 'mud' | 'mixed' | 'rock' | 'unknown';
+export const BEDDINGS = [
+  'sand',
+  'mud',
+  'rock',
+  'gravel',
+  'clay',
+  'silt',
+  'shell',
+  'grass',
+  'mixed',
+  'unknown',
+] as const;
+export type Bedding = (typeof BEDDINGS)[number];
 /** Explicit evaluation clock. Omit only for deterministic historical replay. */
 export interface AssessmentContext {
   assessedAt: string;
@@ -65,7 +77,10 @@ export interface SearchRequest {
   departureContingencyHours: number;
   preferredMaxDepthM: number;
   /** Seabed preference applies to anchors; it never changes equipment or habitat checks. */
+  /** Legacy single preference, read when preferredBeddings is absent. */
   preferredBedding?: Bedding | 'any';
+  /** Accepted seabeds for anchored positions. Empty means no seabed preference. */
+  preferredBeddings?: Bedding[];
   minUnderKeelClearanceM: number;
   maxWindKnots: number;
   maxGustKnots: number;

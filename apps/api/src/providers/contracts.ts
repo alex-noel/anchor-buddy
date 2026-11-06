@@ -36,6 +36,74 @@ export interface HttpTransport {
 
 export const PROVIDERS: readonly ProviderDescriptor[] = [
   {
+    id: 'met-norway',
+    name: 'MET Norway global wind forecast',
+    kind: 'weather',
+    status: 'implemented',
+    authentication: 'none',
+    coverage:
+      'Global model forecasts at selected coordinates; gust coverage varies; no verified shelter, current or wave coverage',
+    attribution: 'Norwegian Meteorological Institute (CC BY 4.0)',
+    documentationUrl: 'https://api.met.no/weatherapi/locationforecast/2.0/documentation',
+    offline: {
+      allowed: true,
+      conditions:
+        'Retain source, retrieval and expiry. CC BY attribution; values converted to knots. Cache responses until provider Expires; identifying User-Agent required.',
+    },
+    freshnessSeconds: 3600,
+  },
+  {
+    id: 'osm-overpass',
+    name: 'OpenStreetMap boating places and seamarks',
+    kind: 'places',
+    status: 'implemented',
+    authentication: 'none',
+    coverage:
+      'Worldwide community coverage; incomplete POIs and marks, unverified position/fee/depth/permission tags',
+    attribution: '© OpenStreetMap contributors, ODbL 1.0',
+    documentationUrl: 'https://dev.overpass-api.de/overpass-doc/en/preface/commons.html',
+    offline: {
+      allowed: true,
+      conditions:
+        'Retain ODbL attribution and comply with database share-alike requirements. Production needs an explicitly configured service, with app-wide quotas and caching.',
+    },
+    freshnessSeconds: 86400,
+  },
+  {
+    id: 'nominatim',
+    name: 'Submitted place-name search',
+    kind: 'places',
+    status: 'implemented',
+    authentication: 'none',
+    coverage:
+      'Worldwide geocoding; explicit user-submit only, never autocomplete or POI extraction',
+    attribution: '© OpenStreetMap contributors, ODbL 1.0',
+    documentationUrl: 'https://operations.osmfoundation.org/policies/nominatim/',
+    offline: {
+      allowed: true,
+      conditions:
+        'Cache results; public instance absolute limit 1 request/sec across the app; use one gateway instance or shared limiter. Production endpoint is configurable.',
+    },
+    freshnessSeconds: 86400,
+  },
+  {
+    id: 'open-meteo-marine',
+    name: 'Optional Open-Meteo wave model',
+    kind: 'weather',
+    status: 'review-required',
+    authentication: 'api-key',
+    coverage:
+      'Global model waves when configured; disabled by default. Free hosted API is non-commercial only; commercial hosted or self-hosted access is explicit.',
+    attribution: 'Open-Meteo and model providers, CC BY 4.0',
+    documentationUrl: 'https://open-meteo.com/en/terms',
+    offline: {
+      allowed: true,
+      conditions:
+        'Data CC BY 4.0 with model attribution; hosted-service use depends on deployment license. Coastal model tides/currents are not used for clearance.',
+    },
+    freshnessSeconds: 3600,
+  },
+  {
     id: 'noaa-enc',
     name: 'NOAA Electronic Navigational Charts',
     kind: 'bathymetry-hazards',

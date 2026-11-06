@@ -864,3 +864,57 @@ test('seabed preferences and navigation mark provenance are validated', () => {
   f.pack.marks!.push({ ...f.pack.marks![0]! });
   assert.ok(validateRegionPack(f.pack).includes('Duplicate marks identifiers.'));
 });
+
+test('multiple seabed preferences match either type and override legacy preferences', () => {
+  const f = fixture();
+  f.search.preferredBeddings = ['sand', 'mud'];
+  f.search.preferredBedding = 'rock';
+  assert.equal(result(f).status, 'passes');
+  f.pack.holdingAreas![0]!.holding = 'mud';
+  f.pack.places[0]!.holding = 'mud';
+  assert.equal(result(f).status, 'passes');
+  f.search.preferredBeddings = ['sand', 'clay'];
+  assert.ok(codes(result(f)).includes('bedding_preference'));
+  f.search.preferredBeddings = [];
+  assert.equal(result(f).status, 'passes');
+});
+
+test('expanded seabed categories require reviewed equipment-compatible evidence', () => {
+  for (const bedding of ['gravel', 'clay', 'silt', 'shell'] as const) {
+    const f = fixture();
+    f.search.preferredBeddings = [bedding, 'sand'];
+    f.pack.holdingAreas![0]!.holding = bedding;
+    f.pack.places[0]!.holding = bedding;
+    assert.deepEqual(validateRegionPack(f.pack), []);
+    assert.equal(result(f).status, 'passes', bedding);
+    f.pack.holdingAreas![0]!.compatibleAnchorTypes = ['other'];
+    assert.equal(result(f).status, 'insufficient_evidence', bedding);
+    assert.ok(codes(result(f)).includes('holding_unknown'));
+  }
+});
+
+test('selecting rock, grass or unknown does not establish suitable holding or clear habitat', () => {
+  for (const bedding of ['rock', 'grass', 'unknown'] as const) {
+    const f = fixture();
+    f.search.preferredBeddings = [bedding, 'sand'];
+    f.pack.holdingAreas![0]!.holding = bedding;
+    f.pack.places[0]!.holding = bedding;
+    assert.deepEqual(validateRegionPack(f.pack), []);
+    assert.equal(result(f).status, 'insufficient_evidence', bedding);
+    assert.ok(codes(result(f)).includes('holding_unknown'));
+    f.pack.coverage = f.pack.coverage.filter((area) => area.layer !== 'habitat');
+    assert.ok(codes(result(f)).includes('habitat_coverage'));
+  }
+});
+
+test('multi-seabed validation rejects ambiguous, malformed or unsupported selections', () => {
+  const f = fixture();
+  for (const preferredBeddings of ['sand', null, ['sand', 'sand'], ['any'], ['weed'], [1]]) {
+    assert.ok(validateSearch({ ...f.search, preferredBeddings }).length > 0);
+  }
+  assert.deepEqual(validateSearch({ ...f.search, preferredBeddings: [] }), []);
+  assert.deepEqual(
+    validateSearch({ ...f.search, preferredBeddings: ['sand', 'mud', 'clay', 'grass'] }),
+    [],
+  );
+});

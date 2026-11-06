@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
-import type { SearchRequest } from '@anchor-buddy/domain';
+import type { Bedding } from '@anchor-buddy/domain';
 import Sheet from './Sheet';
 import SelectField from './SelectField';
+import SeabedSelect from './SeabedSelect';
 import { Button, Check } from './ui';
 import { colors as c } from '../theme';
 import { DEFAULT_FILTERS, type ResultFilters } from '../lib/workspace';
@@ -13,12 +14,12 @@ export default function AdvancedFiltersSheet({
   onClose,
 }: {
   filters: ResultFilters;
-  bedding: SearchRequest['preferredBedding'];
-  onApply: (filters: ResultFilters, bedding: SearchRequest['preferredBedding']) => void;
+  bedding: Bedding[];
+  onApply: (filters: ResultFilters, bedding: Bedding[]) => void;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState(filters);
-  const [bed, setBed] = useState(bedding ?? 'sand');
+  const [bed, setBed] = useState(bedding);
   return (
     <Sheet
       title="Advanced filters & sorting"
@@ -59,20 +60,7 @@ export default function AdvancedFiltersSheet({
           { value: 'all', label: 'All results, including exclusions' },
         ]}
       />
-      <SelectField
-        label="Preferred seabed"
-        value={bed}
-        onChange={(value) => setBed(value as typeof bed)}
-        options={[
-          { value: 'sand', label: 'Sand' },
-          { value: 'mud', label: 'Mud' },
-          { value: 'mixed', label: 'Mixed' },
-          { value: 'rock', label: 'Rock' },
-          { value: 'unknown', label: 'Unknown' },
-          { value: 'any', label: 'Any seabed' },
-        ]}
-        help="Applies to anchor positions. Suitable holding evidence is still required; a seabed preference cannot override an exclusion."
-      />
+      <SeabedSelect value={bed} onChange={setBed} />
       <Check
         label="Only sites with no known or unresolved vessel incompatibility"
         checked={draft.compatibleOnly}
@@ -88,7 +76,7 @@ export default function AdvancedFiltersSheet({
             secondary
             onPress={() => {
               setDraft(DEFAULT_FILTERS);
-              setBed('sand');
+              setBed(['sand']);
             }}
           >
             Reset
