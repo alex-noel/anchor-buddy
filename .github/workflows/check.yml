@@ -5,24 +5,93 @@ on:
     branches: [main]
 permissions:
   contents: read
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  NODE_VERSION: '24.6.0'
+  PYTHON_VERSION: '3.12.9'
 jobs:
   check:
-    runs-on: ubuntu-latest
+    name: Deterministic tests and runtime boundary
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      EXPO_NO_TELEMETRY: '1'
-      EXPO_OFFLINE: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: '24'
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - uses: actions/setup-python@v5
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
-      - run: npm ci
-      - run: npm run check
-      - run: npm run export:web --workspace=@anchor-buddy/mobile
-      - run: npx expo export --platform ios --platform android --output-dir dist-native
-        working-directory: apps/mobile
+          python-version: ${{ env.PYTHON_VERSION }}
+      - id: verify
+        run: node scripts/ci/verify.mjs checks
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
+        with:
+          name: deterministic-${{ github.sha }}
+          path: .artifacts/ci/checks.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  web:
+    name: Web export and bundle boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - id: verify
+        run: node scripts/ci/verify.mjs web
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
+        with:
+          name: web-${{ github.sha }}
+          path: .artifacts/ci/web.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  native-javascript:
+    name: ${{ matrix.platform }} Hermes JavaScript export
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, android]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - id: verify
+        env:
+          TARGET: ${{ matrix.platform }}-js
+        run: node scripts/ci/verify.mjs "$TARGET"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
+        with:
+          name: ${{ matrix.platform }}-hermes-${{ github.sha }}
+          path: .artifacts/ci/${{ matrix.platform }}-js.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  # Full native compilation and parity are pending WATCH-01/02/03 compiler and runner evidence.
+  # Physical-device acceptance remains a manual WATCH-04 gate.
