@@ -73,7 +73,7 @@ import {
 } from './lib/workspace';
 import { colors as c } from './theme';
 import { useWorkspaceController } from './lib/useWorkspaceController';
-import { ActivationQueue, type Tab } from './lib/workspaceController';
+import { cacheCurrentEvidence, type Tab } from './lib/workspaceController';
 
 const tabs: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'explore', label: 'Explore', icon: 'compass' },
@@ -126,11 +126,6 @@ function AnchorApp() {
   const [regionData, setRegionData] = useState<RegionalData | null>(null);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState('');
-  const activation = useRef(new ActivationQueue<{ pack: RegionPack; savedAt: string }>({
-    read: () => getLocal('active-region'),
-    write: (value) => setLocal('active-region', value),
-    remove: () => removeLocal('active-region'),
-  }));
   const lastLiveAttempt = useRef(0);
   const evidenceWrites = useRef<Promise<void>>(Promise.resolve());
   const [mapAreas, setMapAreas] = useState<MapArea[]>([]);
@@ -522,13 +517,12 @@ function AnchorApp() {
       }
       setAssessedAt(new Date().toISOString());
       try {
-        const stored = await saveRegionalData(loaded);
-        if (!controller.signal.aborted && generation.current.current(request)) {
-          if (!keepReviewed) {
-            setSavedAt(stored.savedAt ?? null);
-            await activation.current.activate({ pack: loaded.pack, savedAt: stored.savedAt! }, () => generation.current.current(request) && !controller.signal.aborted);
-          }
-        }
+        await cacheCurrentEvidence(
+          loaded,
+          saveRegionalData,
+          () => !controller.signal.aborted && generation.current.current(request),
+          (stored) => { if (!keepReviewed) setSavedAt(stored.savedAt ?? null); },
+        );
       } catch (error) {
         if (!controller.signal.aborted && generation.current.current(request))
           setDataError('Live data loaded, but could not be cached: ' + String(error));
@@ -643,7 +637,7 @@ function AnchorApp() {
       }
       await updateEvidenceCache((previous) => previous.filter((row) => row.pack.id !== id));
       if (pack.id === id) {
-        await activation.current.remove();
+        await removeLocal('active-region');
         setSavedAt(null);
         setRegionData(null);
         setPack(
@@ -677,7 +671,7 @@ function AnchorApp() {
     if (!pack.sources.length)
       throw new Error('Choose an area and load real source data before saving analysis.');
     const time = new Date().toISOString();
-    await activation.current.activate({ pack, savedAt: time }, () => mounted.current);
+    await setLocal('active-region', { pack, savedAt: time });
     setSavedAt(time);
     if (regionData) await saveRegionalData(regionData);
   };

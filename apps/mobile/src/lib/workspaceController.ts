@@ -64,12 +64,9 @@ export const initialWorkspace: WorkspaceState = {
   plan: null,
   modal: null,
 };
+type FieldKey = Exclude<keyof WorkspaceState, 'modal'>;
+type FieldAction = { [K in FieldKey]: { type: 'set'; key: K; value: WorkspaceState[K] } }[FieldKey];
 export type WorkspaceAction =
-  | {
-      type: 'set';
-      key: Exclude<keyof WorkspaceState, 'modal'>;
-      value: WorkspaceState[Exclude<keyof WorkspaceState, 'modal'>];
-    }
   | { type: 'openModal'; name: ModalName }
   | { type: 'closeModal'; name: ModalName }
   | { type: 'changeTab'; tab: Tab }
@@ -93,7 +90,10 @@ export type WorkspaceAction =
   | { type: 'showWatch'; setup?: { position: Position; radius?: number } }
   | { type: 'commitProfile' }
   | { type: 'closeSearch' };
-export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+export function workspaceReducer(
+  state: WorkspaceState,
+  action: WorkspaceAction | FieldAction,
+): WorkspaceState {
   switch (action.type) {
     case 'set':
       return { ...state, [action.key]: action.value };
@@ -246,36 +246,13 @@ export class RequestGeneration {
   }
 }
 
-/** Serialize pointer writes, restoring the prior complete pointer if cancellation races a write. */
-export class ActivationQueue<T> {
-  private pending: Promise<void> = Promise.resolve();
-  constructor(
-    private readonly storage: {
-      read: () => Promise<T | null>;
-      write: (value: T) => Promise<void>;
-      remove: () => Promise<void>;
-    },
-  ) {}
-  activate(value: T, current: () => boolean): Promise<boolean> {
-    const task = this.pending.then(async () => {
-      if (!current()) return false;
-      const previous = await this.storage.read();
-      if (!current()) return false;
-      await this.storage.write(value);
-      if (current()) return true;
-      if (previous === null) await this.storage.remove();
-      else await this.storage.write(previous);
-      return false;
-    });
-    this.pending = task.then(
-      () => undefined,
-      () => undefined,
-    );
-    return task;
-  }
-  remove(): Promise<void> {
-    const task = this.pending.then(() => this.storage.remove());
-    this.pending = task.catch(() => {});
-    return task;
-  }
+/** A cache write may finish after cancellation; only a current request may use its result. */
+export async function cacheCurrentEvidence<T>(
+  value: T,
+  cache: (value: T) => Promise<T>,
+  current: () => boolean,
+  onCurrent: (stored: T) => void,
+): Promise<void> {
+  const stored = await cache(value);
+  if (current()) onCurrent(stored);
 }

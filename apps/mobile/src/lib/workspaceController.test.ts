@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDefaultSearch } from '@anchor-buddy/domain';
 import {
-  ActivationQueue,
+  cacheCurrentEvidence,
   RequestGeneration,
   initialWorkspace,
   workspaceReducer,
@@ -78,54 +78,72 @@ test('profile invalidates plan and suggestion while leaving the watch route alon
   assert.equal(updated.flow, 'watch');
 });
 
-test('only latest request activates; cancellation during storage restores previous pointer', async () => {
+test('late cache completion after a newer request cannot update active state or durable pointer', async () => {
   const generation = new RequestGeneration();
-  let pointer = 'previous';
   const gate = deferred<void>();
-  let writing = false;
-  const queue = new ActivationQueue<string>({
-    read: async () => pointer,
-    write: async (value) => {
-      if (value === 'A') {
-        writing = true;
-        await gate.promise;
-      }
-      pointer = value;
+  const cache: string[] = [];
+  let active = 'previous';
+  const storage = new Map<string, string>([['active-region', 'explicitly-saved']]);
+  let writes = Promise.resolve();
+  const cacheWrite = (value: string) => {
+    const next = writes.then(async () => {
+      if (value === 'A') await gate.promise;
+      cache.push(value);
+      storage.set('regional-evidence', cache.join(','));
+      return value;
+    });
+    writes = next.then(() => undefined);
+    return next;
+  };
+  const first = generation.begin();
+  const pendingA = cacheCurrentEvidence(
+    'A',
+    cacheWrite,
+    () => generation.current(first),
+    (value) => {
+      active = value;
     },
-    remove: async () => {
-      pointer = '';
+  );
+  const second = generation.begin();
+  const pendingB = cacheCurrentEvidence(
+    'B',
+    cacheWrite,
+    () => generation.current(second),
+    (value) => {
+      active = value;
     },
-  });
-  const a = generation.begin();
-  const first = queue.activate('A', () => generation.current(a));
-  while (!writing) await Promise.resolve();
-  const b = generation.begin();
-  const second = queue.activate('B', () => generation.current(b));
+  );
   gate.resolve();
-  assert.equal(await first, false);
-  assert.equal(await second, true);
-  assert.equal(pointer, 'B');
-  generation.dispose();
-  assert.equal(generation.current(b), false);
+  await Promise.all([pendingA, pendingB]);
+  assert.deepEqual(cache, ['A', 'B']);
+  assert.equal(active, 'B');
+  // A simulated restart reads the separately saved pointer, not the cache entry.
+  assert.equal(storage.get('active-region'), 'explicitly-saved');
+  assert.equal(storage.get('regional-evidence'), 'A,B');
 });
 
-test('closing a search before queued activation never changes the pointer', async () => {
-  const generation = new RequestGeneration();
-  let pointer = 'previous';
-  const queue = new ActivationQueue<string>({
-    read: async () => pointer,
-    write: async (value) => {
-      pointer = value;
-    },
-    remove: async () => {
-      pointer = '';
-    },
-  });
-  const request = generation.begin();
-  const pending = queue.activate('new', () => generation.current(request));
-  generation.cancel();
-  assert.equal(await pending, false);
-  assert.equal(pointer, 'previous');
+test('close and unmount suppress a pending cache completion', async () => {
+  for (const close of ['cancel', 'dispose'] as const) {
+    const generation = new RequestGeneration();
+    const gate = deferred<void>();
+    let activated = false;
+    const request = generation.begin();
+    const pending = cacheCurrentEvidence(
+      'A',
+      async (value) => {
+        await gate.promise;
+        return value;
+      },
+      () => generation.current(request),
+      () => {
+        activated = true;
+      },
+    );
+    generation[close]();
+    gate.resolve();
+    await pending;
+    assert.equal(activated, false);
+  }
 });
 
 test('reopened draft commits its own pin and filters; later drafts do not reuse them', () => {
@@ -170,3 +188,9 @@ test('detail and plan transitions retain candidate identity and return to base o
   assert.equal(saved.tab, 'saved');
   assert.equal(saved.activeSearch, search);
 });
+
+// Compile-time regression: field keys and values cannot be mixed.
+if (false) {
+  // @ts-expect-error activeSearch requires a SearchRequest or null
+  workspaceReducer(initialWorkspace, { type: 'set', key: 'activeSearch', value: 'saved' });
+}
