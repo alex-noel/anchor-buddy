@@ -3,6 +3,7 @@ import {
   validateEvidenceEnvelope,
   validateHazardPrimitive,
 } from './contracts.ts';
+import { MAX_HAZARD_PRIMITIVES } from './hazards.ts';
 import { BEDDINGS, type RegionPack, type SearchRequest, type VesselProfile } from './types.ts';
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -349,13 +350,66 @@ export function validateRegionPack(value: unknown): string[] {
   if (schema.status !== 'supported') return schema.errors;
   if (value.hazardPrimitives !== undefined) {
     if (!Array.isArray(value.hazardPrimitives)) errors.push('Hazard primitives must be an array.');
+    else if (value.hazardPrimitives.length > MAX_HAZARD_PRIMITIVES)
+      errors.push('Unsupported hazard primitive count; no geometry may be dropped or simplified.');
     else {
-      for (const primitive of value.hazardPrimitives)
+      // Bound new primitive topology work before the existing exact polygon validator.
+      let vertices = 0;
+      let containers = 0;
+      let unsupportedComplexity = false;
+      for (const item of value.hazardPrimitives) {
+        if (!record(item) || !record(item.geometry) || !Array.isArray(item.geometry.coordinates))
+          continue;
+        const geometry = item.geometry;
+        const coordinates = geometry.coordinates as unknown[];
+        containers += coordinates.length;
+        if (coordinates.length > 4096 || containers > 16384) {
+          unsupportedComplexity = true;
+          break;
+        }
+        let count = 0;
+        if (geometry.type === 'Point') count = 1;
+        else if (geometry.type === 'LineString') count = coordinates.length;
+        else if (geometry.type === 'Polygon') {
+          for (const ring of coordinates) if (Array.isArray(ring)) count += ring.length;
+        } else if (geometry.type === 'MultiPolygon') {
+          for (const polygon of coordinates) {
+            if (!Array.isArray(polygon)) continue;
+            containers += polygon.length;
+            if (polygon.length > 4096 || containers > 16384) {
+              unsupportedComplexity = true;
+              break;
+            }
+            for (const ring of polygon) if (Array.isArray(ring)) count += ring.length;
+          }
+        }
+        vertices += count;
+        if (unsupportedComplexity || count > 4096 || vertices > 16384) {
+          unsupportedComplexity = true;
+          break;
+        }
+      }
+      if (unsupportedComplexity)
+        return [
+          'Unsupported hazard primitive geometry complexity; retain original geometry for a bounded review.',
+        ];
+      const knownSources = new Set(
+        Array.isArray(value.sources) ? value.sources.filter(record).map((source) => source.id) : [],
+      );
+      const knownHazards = new Set(
+        Array.isArray(value.hazards) ? value.hazards.filter(record).map((hazard) => hazard.id) : [],
+      );
+      for (const primitive of value.hazardPrimitives) {
         errors.push(...validateHazardPrimitive(primitive, validGeometry));
-      if (value.hazardPrimitives.length)
-        errors.push(
-          'UNSUPPORTED_HAZARD_PRIMITIVES: this assessment engine cannot activate primitive hazards until SAFE-01 integration.',
-        );
+        if (!record(primitive)) continue;
+        if (knownHazards.has(primitive.id)) errors.push('Duplicate hazard primitive identity.');
+        knownHazards.add(primitive.id);
+        if (
+          !Array.isArray(primitive.sourceIds) ||
+          primitive.sourceIds.some((id) => !knownSources.has(id))
+        )
+          errors.push('Hazard primitive has unresolved source references.');
+      }
     }
   }
   if (value.schemaVersion === 2 || value.snapshot !== undefined)
@@ -386,13 +440,17 @@ export function validateRegionPack(value: unknown): string[] {
   if (
     !Array.isArray(value.bounds) ||
     value.bounds.length !== 4 ||
-    !value.bounds.every((n) => finite(n, -180, 180)) ||
+    !value.bounds.every((n, index) =>
+      finite(n, index % 2 === 0 ? -180 : -85, index % 2 === 0 ? 180 : 85),
+    ) ||
     !(
       Number(value.bounds[0]) < Number(value.bounds[2]) &&
       Number(value.bounds[1]) < Number(value.bounds[3])
     )
   )
-    errors.push('Region bounds are invalid.');
+    errors.push(
+      'Region bounds require ordered longitudes within ±180 and latitudes within ±85; wrapped bounds are unsupported.',
+    );
   if (
     !record(value.chart) ||
     typeof value.chart.attribution !== 'string' ||

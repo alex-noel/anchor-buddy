@@ -288,7 +288,7 @@ test('F02-T08: monorepo UI unit drafts preserve exact canonical values', () => {
   }
 });
 
-test('primitive exchange preserves unknowns but legacy engine activation rejects even fully sourced primitives', () => {
+test('primitive exchange preserves unknowns and SAFE-01 retains insufficient evidence until review', () => {
   const primitive = {
     id: 'point',
     name: 'Test obstruction',
@@ -323,18 +323,17 @@ test('primitive exchange preserves unknowns but legacy engine activation rejects
     [],
   );
   const pack = createDemoPack(now);
-  const input = { ...pack, hazardPrimitives: [primitive] };
-  assert.match(validateRegionPack(input).join(' '), /UNSUPPORTED_HAZARD_PRIMITIVES/);
-  assert.throws(
-    () =>
-      assessCandidate(
-        { id: 'test', name: 'Test', kind: 'generated', position: [0, 0] },
-        DEFAULT_VESSEL,
-        createDefaultSearch(now),
-        input as typeof pack,
-      ),
-    /UNSUPPORTED_HAZARD_PRIMITIVES/,
+  const input = { ...pack, hazardPrimitives: [{ ...primitive, sourceIds: [pack.sources[0]!.id] }] };
+  assert.deepEqual(validateRegionPack(input), []);
+  const result = assessCandidate(
+    { id: 'test', name: 'Test', kind: 'generated', position: createDefaultSearch(now).origin },
+    DEFAULT_VESSEL,
+    createDefaultSearch(now),
+    input as typeof pack,
   );
+  assert.notEqual(result.status, 'passes');
+  assert.ok(result.reasons.some((reason) => reason.code === 'hazard_primitive_uncertainty'));
+  assert.ok(result.reasons.some((reason) => reason.code === 'hazard_model_review_required'));
 });
 
 test('public contract readers reject malformed nested input without throwing', async () => {

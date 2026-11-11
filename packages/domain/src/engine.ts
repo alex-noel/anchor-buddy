@@ -21,6 +21,7 @@ import {
   distanceM,
   pointInArea,
 } from './geo.ts';
+import { assessHazardPrimitives } from './hazards.ts';
 import { estimateCost, localDate } from './cost.ts';
 import { getPreferredBeddings } from './seabed.ts';
 import { assertInputs, validateAssessmentContext } from './validation.ts';
@@ -487,10 +488,21 @@ function assess(
       'insufficient_evidence',
     );
 
+  const primitiveHazards = assessHazardPrimitives(
+    candidate.position,
+    radius,
+    pack.hazardPrimitives ?? [],
+  );
+  for (const reason of primitiveHazards.reasons)
+    add(reason.code, reason.message, reason.severity, reason.sourceIds);
+
   for (const layer of layers) {
     const covering = pack.coverage.filter(
       (c) =>
-        c.layer === layer && c.complete && areaContainsDisk(candidate.position, radius, c.geometry),
+        c.layer === layer &&
+        c.complete &&
+        (layer !== 'hazards' || primitiveHazards.complete) &&
+        areaContainsDisk(candidate.position, radius, c.geometry),
     );
     covering.forEach((c) => c.sourceIds.forEach((id) => sources.add(id)));
     if (!intervalsCover(covering, start, end))
