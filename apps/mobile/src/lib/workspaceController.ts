@@ -256,3 +256,52 @@ export async function cacheCurrentEvidence<T>(
   const stored = await cache(value);
   if (current()) onCurrent(stored);
 }
+
+/** Owns status observation only; the narrow bridge cannot issue native watch commands. */
+export function observeWatchStatus<T>(
+  bridge: { getStatus: () => Promise<T>; subscribe: (listener: (status: T) => void) => () => void },
+  accept: (status: T) => void,
+  unavailable: () => void,
+) {
+  let live = true;
+  let version = 0;
+  const unsubscribe = bridge.subscribe((status) => {
+    version++;
+    if (live) accept(status);
+  });
+  return {
+    async refresh() {
+      const request = ++version;
+      try {
+        const status = await bridge.getStatus();
+        if (live && request === version) accept(status);
+      } catch {
+        if (live && request === version) unavailable();
+      }
+    },
+    invalidate() {
+      version++;
+    },
+    dispose() {
+      live = false;
+      version++;
+      unsubscribe();
+    },
+  };
+}
+
+/** Request cancellation and teardown never touch the independently running native watch. */
+export function cancelWorkspaceRequest(
+  generation: RequestGeneration,
+  request: AbortController | null,
+) {
+  generation.cancel();
+  request?.abort();
+}
+export function disposeWorkspaceRequest(
+  generation: RequestGeneration,
+  request: AbortController | null,
+) {
+  generation.dispose();
+  request?.abort();
+}

@@ -73,7 +73,7 @@ import {
 } from './lib/workspace';
 import { colors as c } from './theme';
 import { useWorkspaceController } from './lib/useWorkspaceController';
-import { cacheCurrentEvidence, type Tab } from './lib/workspaceController';
+import { cacheCurrentEvidence, observeWatchStatus, type Tab } from './lib/workspaceController';
 
 const tabs: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'explore', label: 'Explore', icon: 'compass' },
@@ -281,41 +281,25 @@ function AnchorApp() {
     };
   }, []);
   useEffect(() => {
-    let live = true;
-    let version = 0;
     const accept = (status: Watch.WatchStatus) => {
       lastWatchContact.current = monotonicNow();
       setWatchClock(lastWatchContact.current);
       previouslyActive.current = activeWatchStates.has(status.state);
       setWatchStatus(status);
     };
-    const refresh = async () => {
-      const request = ++version;
-      try {
-        const status = await Watch.getStatus();
-        if (live && request === version) accept(status);
-      } catch {
-        if (live && request === version) setWatchStatus(null);
-      }
-    };
-    const off = Watch.subscribe((status) => {
-      version++;
-      if (live) accept(status);
-    });
-    void refresh();
+    const observer = observeWatchStatus(Watch, accept, () => setWatchStatus(null));
+    void observer.refresh();
     const timer = setInterval(() => {
       setWatchClock(monotonicNow());
-      if (AppState.currentState === 'active' || AppState.currentState === null) void refresh();
+      if (AppState.currentState === 'active' || AppState.currentState === null) void observer.refresh();
     }, 5000);
     const listener = AppState.addEventListener('change', (state) => {
-      version++;
+      observer.invalidate();
       setWatchStatus(null);
-      if (state === 'active') void refresh();
+      if (state === 'active') void observer.refresh();
     });
     return () => {
-      live = false;
-      version++;
-      off();
+      observer.dispose();
       clearInterval(timer);
       listener.remove();
     };

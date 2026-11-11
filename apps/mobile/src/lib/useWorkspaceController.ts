@@ -3,6 +3,8 @@ import {
   initialWorkspace,
   workspaceReducer,
   RequestGeneration,
+  cancelWorkspaceRequest,
+  disposeWorkspaceRequest,
   type ModalName,
   type WorkspaceState,
 } from './workspaceController';
@@ -22,16 +24,14 @@ export function useWorkspaceController() {
   const generation = useRef(new RequestGeneration());
   const mounted = useRef(true);
   const cancelDataRequest = () => {
-    generation.current.cancel();
-    dataRequest.current?.abort();
+    cancelWorkspaceRequest(generation.current, dataRequest.current);
   };
   useEffect(() => {
     mounted.current = true;
     generation.current.mount();
     return () => {
       mounted.current = false;
-      generation.current.dispose();
-      dataRequest.current?.abort();
+      disposeWorkspaceRequest(generation.current, dataRequest.current);
     };
   }, []);
   const send = (action: import('./workspaceController').WorkspaceAction) => dispatch(action);
