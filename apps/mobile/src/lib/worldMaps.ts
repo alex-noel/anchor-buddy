@@ -5,9 +5,9 @@ import { getLocal, removeLocal, setLocal } from './storage';
 import {
   createWorldMapCache,
   fetchBoundedMapResource,
-  onlineWorldMapStyle,
-  worldVectorLayers,
-  WORLD_MAP_ATTRIBUTION,
+  cachedWorldMapStyle,
+  mapAreaReadiness,
+  MAP_FONT_URL,
   MAP_USER_AGENT,
   MAP_FONT,
   validMapId,
@@ -17,6 +17,9 @@ import {
 } from './worldMapsCore';
 export * from './worldMapsCore';
 const key = 'world-map-areas-v1';
+// Native file reads bypass JS. Verify each immutable resource before first use;
+// writes/deletes invalidate the in-process verification, and reopening verifies again.
+const verifiedFiles = new Map<string, string>();
 const root = () => new Directory(Paths.document, 'world-maps-v1');
 const areaDirectory = (id: string) => {
   if (!validMapId(id)) throw new Error('Invalid map area.');
@@ -49,6 +52,7 @@ const io: MapCacheIO = {
     return f.exists ? await f.bytes() : null;
   },
   write: async (id, path, bytes) => {
+    verifiedFiles.delete(`${id}/${path}`);
     const segments = path.split('/');
     const name = segments.pop()!;
     const directory = new Directory(areaDirectory(id), ...segments);
@@ -56,6 +60,7 @@ const io: MapCacheIO = {
     new File(directory, name).write(bytes);
   },
   remove: async (id) => {
+    for (const key of verifiedFiles.keys()) if (key.startsWith(id + '/')) verifiedFiles.delete(key);
     const directory = areaDirectory(id);
     if (directory.exists) directory.delete();
     await removeLocal('world-map-manifest:' + id);
@@ -78,45 +83,53 @@ TransformRequestManager.addHeader({
   value: MAP_USER_AGENT,
 });
 export async function loadWorldMapStyle(online: boolean): Promise<Record<string, unknown> | null> {
-  if (online) return onlineWorldMapStyle();
-  const areas = (await listMapAreas()).filter((area) => area.status === 'complete');
-  const sources: Record<string, unknown> = {};
-  const layers: object[] = [];
+  const areas = (await listMapAreas()).filter((area) => area.usableZoom !== undefined);
+  const available: { area: MapArea; tiles: string }[] = [];
+  const glyphRanges = new Set<string>();
   const fontDirectory = new Directory(root(), 'fonts', MAP_FONT);
   fontDirectory.create({ intermediates: true, idempotent: true });
   for (const area of areas) {
-    const verified = await cache.verifyMapArea(area.id);
-    if (verified?.status !== 'complete') continue;
-    const manifest = await cache.readVerifiedManifest(area.id);
-    if (!manifest || manifest.area.status !== 'complete') continue;
-    // verifyMapArea checks every tile before native file loading bypasses JS.
-    for (const resource of Object.values(manifest.resources)) {
-      if (resource.kind !== 'glyph') continue;
-      const bytes = await io.read(area.id, resource.path);
-      if (!bytes || bytes.byteLength !== resource.bytes || (await hash(bytes)) !== resource.sha256)
-        throw new Error('Saved map integrity check failed. Delete and redownload this area.');
-      new File(fontDirectory, resource.path.split('/').at(-1)!).write(bytes);
+    let manifest: MapAreaManifest | null;
+    try {
+      manifest = await cache.readVerifiedManifest(area.id);
+    } catch {
+      continue;
     }
-    const source = `world-${area.id}`;
-    sources[source] = {
-      type: 'vector',
-      tiles: [`${areaDirectory(area.id).uri.replace(/\/$/, '')}/tiles/{z}/{x}/{y}.pbf`],
-      minzoom: 0,
-      maxzoom: area.maxZoom,
-      bounds:
-        area.bounds[0] < area.bounds[2] ? area.bounds : [-180, area.bounds[1], 180, area.bounds[3]],
-      attribution: WORLD_MAP_ATTRIBUTION,
-    };
-    layers.push(...worldVectorLayers(source, source));
+    if (!manifest) continue;
+    let damaged = false;
+    for (const [path, resource] of Object.entries(manifest.resources)) {
+      const identity = `${area.id}/${path}`;
+      if (verifiedFiles.get(identity) !== resource.sha256) {
+        const bytes = await io.read(area.id, path);
+        if (
+          !bytes ||
+          bytes.byteLength !== resource.bytes ||
+          (await hash(bytes)) !== resource.sha256
+        ) {
+          delete manifest.resources[path];
+          damaged = true;
+          continue;
+        }
+        if (resource.kind === 'glyph')
+          new File(fontDirectory, path.split('/').at(-1)!).write(bytes);
+        verifiedFiles.set(identity, resource.sha256);
+      }
+      if (resource.kind === 'glyph') glyphRanges.add(path.slice(7, -4));
+    }
+    if (damaged) void cache.verifyMapArea(area.id).catch(() => {});
+    available.push({
+      area: mapAreaReadiness(manifest),
+      tiles: `${areaDirectory(area.id).uri.replace(/\/$/, '')}/tiles/{z}/{x}/{y}.pbf`,
+    });
   }
-  if (!layers.length) return null;
-  return {
-    version: 8,
-    glyphs: `${root().uri.replace(/\/$/, '')}/fonts/{fontstack}/{range}.pbf`,
-    sources,
-    layers: [
-      { id: 'world-background', type: 'background', paint: { 'background-color': '#F2F4F7' } },
-      ...layers,
-    ],
-  };
+  const localGlyphs = `${root().uri.replace(/\/$/, '')}/fonts/{fontstack}/{range}.pbf`;
+  // Prefer only verified font ranges locally; uncached labels still load online.
+  if (glyphRanges.size)
+    TransformRequestManager.addUrlTransform({
+      id: 'anchorbuddy-cached-glyphs',
+      find: `^https://tiles\\.openfreemap\\.org/fonts/(?:Noto%20Sans%20Regular|Noto Sans Regular)/(${[...glyphRanges].join('|')})\\.pbf$`,
+      replace: `${fontDirectory.uri.replace(/\/$/, '')}/$1.pbf`,
+    });
+  else TransformRequestManager.removeUrlTransform('anchorbuddy-cached-glyphs');
+  return cachedWorldMapStyle(online, available, online ? MAP_FONT_URL : localGlyphs);
 }

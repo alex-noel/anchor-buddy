@@ -21,6 +21,7 @@ import {
   distanceM,
   pointInArea,
 } from './geo.ts';
+import { assessHazardPrimitives } from './hazards.ts';
 import { estimateCost, localDate } from './cost.ts';
 import { getPreferredBeddings } from './seabed.ts';
 import { assertInputs, validateAssessmentContext } from './validation.ts';
@@ -487,10 +488,21 @@ function assess(
       'insufficient_evidence',
     );
 
+  const primitiveHazards = assessHazardPrimitives(
+    candidate.position,
+    radius,
+    pack.hazardPrimitives ?? [],
+  );
+  for (const reason of primitiveHazards.reasons)
+    add(reason.code, reason.message, reason.severity, reason.sourceIds);
+
   for (const layer of layers) {
     const covering = pack.coverage.filter(
       (c) =>
-        c.layer === layer && c.complete && areaContainsDisk(candidate.position, radius, c.geometry),
+        c.layer === layer &&
+        c.complete &&
+        (layer !== 'hazards' || primitiveHazards.complete) &&
+        areaContainsDisk(candidate.position, radius, c.geometry),
     );
     covering.forEach((c) => c.sourceIds.forEach((id) => sources.add(id)));
     if (!intervalsCover(covering, start, end))
@@ -752,6 +764,24 @@ function assess(
     : reasons.some((reason) => reason.severity === 'insufficient_evidence')
       ? 'insufficient_evidence'
       : 'passes';
+  // The iterative radius is also used for preliminary hazard screening. It is
+  // not a resolved swing footprint until the complete rode model has resolved.
+  const anchorFootprintResolved =
+    anchored &&
+    requiredRode !== null &&
+    converged &&
+    !!scope &&
+    (simulated || scope.reviewStatus === 'reviewed') &&
+    !reasons.some(
+      (reason) => reason.code === 'scope_conditions' || reason.code === 'depth_coverage',
+    );
+  const publishedSwingRadius = anchored
+    ? anchorFootprintResolved
+      ? radius
+      : null
+    : candidate.kind === 'mooring' && candidate.place?.mooringSwingRadiusM !== undefined
+      ? radius
+      : null;
   return {
     id: candidate.id,
     candidate,
@@ -763,8 +793,8 @@ function assess(
     minDepthM: minDepth,
     maxDepthM: maxDepth,
     bedding,
-    requiredRodeM: requiredRode,
-    swingRadiusM: radius,
+    requiredRodeM: anchorFootprintResolved ? requiredRode : null,
+    swingRadiusM: publishedSwingRadius,
     scopeRatio: anchored ? (scope?.ratio ?? null) : null,
     depthAllowancePercent: allowance,
     cost: place

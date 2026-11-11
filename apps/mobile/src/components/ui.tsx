@@ -1,4 +1,4 @@
-import React, { type ReactNode } from 'react';
+import React, { useId, type ReactNode } from 'react';
 import {
   Platform,
   Pressable,
@@ -41,6 +41,7 @@ export function Button({
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
+      accessibilityState={{ disabled }}
       onPress={onPress}
       style={({ pressed }) => [
         s.button,
@@ -95,6 +96,8 @@ export function Field({
   numeric = false,
   signed = false,
   help,
+  required = false,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -103,13 +106,30 @@ export function Field({
   numeric?: boolean;
   signed?: boolean;
   help?: string;
+  required?: boolean;
+  disabled?: boolean;
 }) {
+  const hintId = useId();
   return (
     <View style={{ flex: 1, minWidth: 130, gap: 7 }}>
-      <Text style={s.fieldLabel}>{label}</Text>
+      <Text style={s.fieldLabel}>
+        {label}
+        {required ? ' *' : ''}
+      </Text>
       <View style={s.inputWrap}>
         <TextInput
           accessibilityLabel={label}
+          editable={!disabled}
+          accessibilityState={{ disabled }}
+          accessibilityHint={[
+            required ? 'Required.' : '',
+            suffix ? `Unit: ${suffix}.` : '',
+            help ?? '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          aria-required={required}
+          aria-describedby={help ? hintId : undefined}
           value={value}
           onChangeText={onChange}
           keyboardType={
@@ -127,11 +147,15 @@ export function Field({
           spellCheck={false}
           returnKeyType="done"
           autoCapitalize="none"
-          style={s.input}
+          style={[s.input, disabled && { opacity: 0.6 }]}
         />
         {suffix ? <Text style={{ color: c.muted, fontSize: 12 }}>{suffix}</Text> : null}
       </View>
-      {help ? <Text style={s.help}>{help}</Text> : null}
+      {help ? (
+        <Text nativeID={hintId} style={s.help}>
+          {help}
+        </Text>
+      ) : null}
     </View>
   );
 }

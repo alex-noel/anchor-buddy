@@ -1,7 +1,7 @@
 import { WatchKernel } from './kernel';
-import type { ArmOptions, WatchFix, WatchPermissions, WatchStatus } from './types';
+import type { ArmOptions, WatchFix, WatchPermissions, WatchStatus } from '../types';
 
-/** Opt-in foreground replay harness. It never claims native availability or protects an actual vessel. */
+/** Test-only replay harness. It is not exported or imported by the application runtime. */
 export class WatchSimulator {
   private kernel = new WatchKernel(true);
   private listeners = new Set<(status: WatchStatus) => void>();

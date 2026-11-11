@@ -1,6 +1,6 @@
 # Anchor watch native module
 
-An Expo local module for a supplemental anchor watch. An iOS or Android development build is required. Expo Go and web never silently substitute JavaScript monitoring. `enableSimulation()` explicitly enables an in-memory, foreground-only replay harness; every simulated status carries `simulation: true` and `nativeAvailable: false`.
+An Expo local module for a supplemental anchor watch. An installed iOS or Android development build is required. Browsers and Expo Go report that native monitoring is unavailable and cannot arm a watch, inject positions or run an alarm test. The application has no simulator. The replay harness and executable reference kernel live under `src/testing` and are imported only by automated tests.
 
 The device evaluates the full alarm circle from the fixed, user-confirmed anchor. It never recentres automatically. This radius is an alarm setting, not a calculation of available anchoring space. The app must independently review the rode/swing footprint and arrival checklist.
 
@@ -10,9 +10,14 @@ const permissions = await Watch.requestPermissions();
 if (!permissions.canArm) return; // Show the returned permission explanation and OS settings link.
 await Watch.testAlarm();
 // After the user confirms hearing the test, the physical anchor position and arrival checklist:
-await Watch.arm({ anchor: { latitude: 24.55, longitude: -81.8 }, radiusM: 90,
-  anchorConfirmed: true, checklistConfirmed: true, testAlarmConfirmed: true });
-const remove = Watch.subscribe(status => updateUI(status));
+await Watch.arm({
+  anchor: verifiedAnchorPosition,
+  radiusM: confirmedAlarmRadiusM,
+  anchorConfirmed: true,
+  checklistConfirmed: true,
+  testAlarmConfirmed: true,
+});
+const remove = Watch.subscribe((status) => updateUI(status));
 // Re-read getStatus() on every foreground/resume. Do not infer liveness from stored UI state.
 ```
 
@@ -26,7 +31,9 @@ The assistant has no watch-control tool. Stop, radius adjustment, arming and ack
 
 ## Verification
 
-`npm test --workspace=@anchor-buddy/anchor-watch` exercises the executable reference kernel; `npm run typecheck --workspace=@anchor-buddy/anchor-watch` checks the bridge and simulator. Native engines mirror the reference state transitions, but these tests do not execute CoreLocation, Android services or native notification delivery. Before release build and test on physical iOS and Android devices. There is no native-build or on-water validation claim in this repository.
+`npm test --workspace=@anchor-buddy/anchor-watch` exercises the executable reference kernel, native bridge validation and unsupported browser behavior. `npm run typecheck --workspace=@anchor-buddy/anchor-watch` checks the TypeScript code. Native engines mirror the reference state transitions, but these tests do not execute CoreLocation, Android services or native notification delivery. Before release build and test on physical iOS and Android devices. There is no native-build or on-water validation claim in this repository.
+
+The bridge does not load or migrate a JavaScript session into the native engine. Reading status or subscribing never arms, stops, acknowledges, changes the radius or recentres an existing native watch. A new manual watch starts with blank position and radius fields unless the user arrived from an actual anchor plan.
 
 For both platforms record OS/device, build SHA, permissions, battery settings, location accuracy, native status, timestamps and audible/visible alert outcome. Keep an independent watch throughout trials. Required trials:
 
@@ -38,4 +45,4 @@ For both platforms record OS/device, build SHA, permissions, battery settings, l
 - Disconnect JavaScript during a native session, then reconnect and query status; native monitoring must remain independent and the UI must reflect the actual live state.
 - Verify Android foreground-service startup in the visible app, persistent service notification, alarm channel settings, GPS provider loss and OS service restrictions. Verify iOS Always/Precise authorization, notification delegate forwarding and background location capability.
 
-Official implementation references: [Expo Modules API](https://docs.expo.dev/modules/module-api/), [Android location foreground services](https://developer.android.com/develop/background-work/services/fgs/service-types#location), [Apple standard location service](https://developer.apple.com/documentation/CoreLocation/CLLocationManager/startUpdatingLocation()), and [Apple notification authorization](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/requestauthorization(options:completionhandler:)).
+Official implementation references: [Expo Modules API](https://docs.expo.dev/modules/module-api/), [Android location foreground services](https://developer.android.com/develop/background-work/services/fgs/service-types#location), [Apple standard location service](<https://developer.apple.com/documentation/CoreLocation/CLLocationManager/startUpdatingLocation()>), and [Apple notification authorization](<https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/requestauthorization(options:completionhandler:)>).

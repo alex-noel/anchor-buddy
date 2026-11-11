@@ -1,3 +1,4 @@
+/** Explicit test fixtures. Never import this entry point from application code. */
 import type {
   AreaGeometry,
   CoverageArea,

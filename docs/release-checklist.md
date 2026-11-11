@@ -1,8 +1,8 @@
 # Public release checklist
 
-No public nautical release is certified by this repository. The bundled region is synthetic, partner AI access is unavailable, and real regional data, full native builds, physical-device overnight trials and qualified maritime/on-water validation remain outstanding. A completed automated test suite is development evidence only.
+No public nautical release is certified by this repository. Runtime data comes from real providers or verified cached source snapshots; there is no bundled demonstration region or synthetic fallback. Partner AI access is unavailable, and reviewed nautical regional data, full native builds, physical-device overnight trials and qualified maritime/on-water validation remain outstanding. A completed automated test suite is development evidence only.
 
-Record the exact source snapshot, commit/build identifier, reviewer, date, device/OS and outcome for each applicable gate. Store evidence outside the app's synthetic fixtures. Do not mark a gate complete solely because a configuration field accepts `true`.
+Record the exact source snapshot, commit/build identifier, reviewer, date, device/OS and outcome for each applicable gate. Store release evidence separately from isolated test fixtures. Do not mark a gate complete solely because a configuration field accepts `true`.
 
 ## Regional evidence and maritime review
 
@@ -37,9 +37,10 @@ Record the exact source snapshot, commit/build identifier, reviewer, date, devic
 - [ ] Verify result → plan → watch → plan preserves the adjusted position and rode. Confirm watch status remains accessible from all tabs, initial setup cannot block an existing watch, and closing a search never stops or recentres native monitoring.
 - [ ] Test expired forecasts, forecast/tide interval gaps, mismatched or missing datums, spatially inapplicable station/grid evidence, uncertain rules, restricted footprints and insufficient deployed/usable rode.
 - [ ] Verify interrupted, corrupt, identity-mismatched and oversized asset downloads preserve the previous active pack; check activation after restart and assessment after replacement.
-- [ ] Confirm saved analysis remains usable without network while expired evidence stays visibly expired. Reconnection requires installing refreshed evidence rather than resetting timestamps.
+- [ ] Confirm saved analysis remains usable without network while expired evidence stays visibly expired. Active live searches refresh after reconnect and expiry without resetting source timestamps; separately reviewed packs require a published update. Verify failed source components retain only original dated evidence and successful empty responses remove old records.
+- [ ] Exercise Europe/Asia presets, coarse-first download interruption/resume, partial-map opening, local-language labels, legacy caches, cached map fallback with an incorrect online hint, automatic offline mode and reconnect cooldown. Verify no world dataset is bundled.
 - [ ] Test permitted native offline chart downloads/resume and resource/style identity; verify licensing, attributions and asset integrity. Do not bulk-download public OSM tiles. Web analysis caching is not native offline chart support.
-- [ ] Exercise narrow screens, tablets, map gestures, accessible labels, large text, keyboard interaction and readable warnings. Verify sample provenance remains accessible in setup, assessment/source details and Settings, and the simulator remains explicitly distinguished from real monitoring throughout its watch flow.
+- [ ] Exercise narrow screens, tablets, map gestures, accessible labels, large text, keyboard interaction and readable warnings. Verify the browser reports native watch support as unavailable, with no simulator, artificial positions or alarm-test controls; native watch confirmation and alarm safeguards remain required.
 
 ## Deployment, dependencies and operations
 

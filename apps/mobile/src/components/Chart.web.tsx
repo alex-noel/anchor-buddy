@@ -16,6 +16,8 @@ import { useChartStyle } from './useChartStyle';
 export default function Chart(props: ChartProps) {
   const div = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
+  const styleReady = useRef(false);
+  const scaleControl = useRef<maplibregl.ScaleControl | null>(null);
   const refs = useRef(props);
   refs.current = props;
   const base = useChartStyle(props.pack, props.onlineBasemap);
@@ -58,6 +60,10 @@ export default function Chart(props: ChartProps) {
         attributionControl: { compact: true },
       });
       map.current = m;
+      const ready = () => {
+        styleReady.current = true;
+      };
+      m.on('style.load', ready);
       const resize = () => {
         if (!div.current) return;
         const width = div.current.clientWidth,
@@ -76,7 +82,10 @@ export default function Chart(props: ChartProps) {
         setView({ zoom: m.getZoom(), bearing: m.getBearing(), pitch: m.getPitch() }),
       );
       m.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
-      m.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-left');
+      scaleControl.current = new maplibregl.ScaleControl({
+        unit: refs.current.units ?? 'nautical',
+      });
+      m.addControl(scaleControl.current, 'bottom-left');
       m.on('contextmenu', (e) => refs.current.onPin([e.lngLat.lng, e.lngLat.lat]));
       m.on('click', (e) => {
         if (refs.current.selectOnTap) refs.current.onPin([e.lngLat.lng, e.lngLat.lat]);
@@ -86,7 +95,7 @@ export default function Chart(props: ChartProps) {
         refs.current.onPin([e.lngLat.lng, e.lngLat.lat]);
       });
       m.on('error', () =>
-        setError('Basemap unavailable. Downloaded analysis layers remain available.'),
+        setError('Some online map detail is unavailable. Saved map coverage remains visible.'),
       );
       return () => {
         observer.disconnect();
@@ -94,6 +103,8 @@ export default function Chart(props: ChartProps) {
         evidenceMarkers.current.forEach((x) => x.remove());
         m.remove();
         map.current = null;
+        scaleControl.current = null;
+        styleReady.current = false;
       };
     } catch {
       setError(
@@ -102,23 +113,34 @@ export default function Chart(props: ChartProps) {
     }
   }, []);
   useEffect(() => {
+    scaleControl.current?.setUnit(props.units ?? 'nautical');
+  }, [props.units]);
+  useEffect(() => {
     const m = map.current;
     if (!m) return;
     // isStyleLoaded also waits for source data. style.load may already have fired
     // while a source is pending, so waiting for it here can discard an offline style.
-    m.setStyle(
-      buildMapStyle(
-        props.pack,
-        props.assessments.find((a) => a.id === props.selectedId),
-        props.onlineBasemap,
-        props.showDepth,
-        base,
-        props.showBedding,
-        props.searchRadiusNm ? { origin: props.origin, radiusNm: props.searchRadiusNm } : undefined,
-        props.showMarks,
-      ) as StyleSpecification,
-      { diff: m.isStyleLoaded() === true },
-    );
+    const update = () =>
+      m.setStyle(
+        buildMapStyle(
+          props.pack,
+          props.assessments.find((a) => a.id === props.selectedId),
+          props.onlineBasemap,
+          props.showDepth,
+          base,
+          props.showBedding,
+          props.searchRadiusNm
+            ? { origin: props.origin, radiusNm: props.searchRadiusNm }
+            : undefined,
+          props.showMarks,
+        ) as StyleSpecification,
+        { diff: true },
+      );
+    if (styleReady.current) update();
+    else m.once('style.load', update);
+    return () => {
+      m.off('style.load', update);
+    };
   }, [
     props.pack,
     props.selectedId,

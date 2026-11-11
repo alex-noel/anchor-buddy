@@ -146,3 +146,108 @@ export function rectangle(west: number, south: number, east: number, north: numb
     ],
   };
 }
+
+/** Engineering bounds pending qualified review; never a source positional uncertainty. */
+export const PRIMITIVE_GEOMETRY_LIMITS = Object.freeze({
+  maxVertices: 4096,
+  maxDistanceFromQueryM: 50_000,
+  maxDistanceEvaluations: 50_000,
+  distanceResolutionM: 0.25,
+  guardM: 2,
+});
+export interface GeometryWorkBudget {
+  remaining: number;
+}
+export type PrimitiveDistanceBounds =
+  | { status: 'bounded'; lowerM: number; upperM: number }
+  | { status: 'unsupported'; reason: 'complexity' | 'extent' | 'coordinates' };
+
+/**
+ * Bound WGS84 distance to original lon/lat-linear geometry, not a rendered simplification.
+ * Spherical curve minima use an adaptive path-length bound (triangle inequality).
+ * WGS84/sphere metric factors 0.994..1.006 enclose the ellipsoid's metric extrema;
+ * the test-only PROJ corpus verifies this engineering envelope, not maritime approval.
+ */
+export function primitiveDistanceBounds(
+  origin: Position,
+  geometry: import('./contracts.ts').HazardPrimitive['geometry'],
+  budget: GeometryWorkBudget = { remaining: PRIMITIVE_GEOMETRY_LIMITS.maxDistanceEvaluations },
+): PrimitiveDistanceBounds {
+  const valid = (p: Position) =>
+    Array.isArray(p) &&
+    p.length === 2 &&
+    p.every(Number.isFinite) &&
+    Math.abs(p[0]) <= 180 &&
+    Math.abs(p[1]) <= 85;
+  if (!valid(origin)) return { status: 'unsupported', reason: 'coordinates' };
+  const lines =
+    geometry.type === 'Point'
+      ? [[geometry.coordinates]]
+      : geometry.type === 'LineString'
+        ? [geometry.coordinates]
+        : geometry.type === 'Polygon'
+          ? geometry.coordinates
+          : geometry.coordinates.flat();
+  let count = 0;
+  let best = Infinity;
+  const segments: [Position, Position][] = [];
+  const compare = (a: Position, b: Position) => a[0] - b[0] || a[1] - b[1];
+  const distance = (p: Position): number | null => {
+    if (budget.remaining <= 0) return null;
+    budget.remaining--;
+    return distanceM(origin, p);
+  };
+  for (const line of lines) {
+    for (let i = 0; i < line.length; i++) {
+      const p = line[i]!;
+      if (++count > PRIMITIVE_GEOMETRY_LIMITS.maxVertices)
+        return { status: 'unsupported', reason: 'complexity' };
+      if (!valid(p) || Math.abs(p[0] - origin[0]) > 180)
+        return { status: 'unsupported', reason: 'coordinates' };
+      const d = distance(p);
+      if (d === null) return { status: 'unsupported', reason: 'complexity' };
+      if (d > PRIMITIVE_GEOMETRY_LIMITS.maxDistanceFromQueryM)
+        return { status: 'unsupported', reason: 'extent' };
+      best = Math.min(best, d);
+      if (i) {
+        const previous = line[i - 1]!;
+        if (Math.abs(p[0] - previous[0]) > 180)
+          return { status: 'unsupported', reason: 'coordinates' };
+        segments.push(compare(previous, p) <= 0 ? [previous, p] : [p, previous]);
+      }
+    }
+  }
+  if (!count) return { status: 'unsupported', reason: 'coordinates' };
+  if (
+    (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') &&
+    pointInArea(origin, geometry)
+  )
+    return { status: 'bounded', lowerM: 0, upperM: 0 };
+  segments.sort((a, b) => compare(a[0], b[0]) || compare(a[1], b[1]));
+  const resolution = PRIMITIVE_GEOMETRY_LIMITS.distanceResolutionM;
+  for (const [start, end] of segments) {
+    const da = distance(start),
+      db = distance(end);
+    if (da === null || db === null) return { status: 'unsupported', reason: 'complexity' };
+    const pending: [Position, Position, number, number][] = [[start, end, da, db]];
+    while (pending.length) {
+      const [a, b, distanceA, distanceB] = pending.pop()!;
+      // cos(latitude) is largest at the latitude closest to zero on this segment.
+      const minLatitude = a[1] * b[1] <= 0 ? 0 : Math.min(Math.abs(a[1]), Math.abs(b[1]));
+      const pathUpper =
+        EARTH_RADIUS_M * RAD * Math.hypot(b[1] - a[1], (b[0] - a[0]) * Math.cos(minLatitude * RAD));
+      const lower = Math.max(0, (distanceA + distanceB - pathUpper) / 2);
+      if (lower >= best - resolution || pathUpper <= 2 * resolution) continue;
+      const middle: Position = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const dm = distance(middle);
+      if (dm === null) return { status: 'unsupported', reason: 'complexity' };
+      best = Math.min(best, dm);
+      pending.push([middle, b, dm, distanceB], [a, middle, distanceA, dm]);
+    }
+  }
+  return {
+    status: 'bounded',
+    lowerM: Math.max(0, best - resolution) * 0.994,
+    upperM: best * 1.006,
+  };
+}

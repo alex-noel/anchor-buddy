@@ -24,7 +24,7 @@ export class MetNorwayProvider {
     if (!props?.meta || !Array.isArray(props.timeseries))
       throw new ProviderError('INVALID_RESPONSE', 'MET Norway returned an invalid forecast');
     const retrieved = response.provenance.retrievedAt;
-    const validUntil = new Date(Date.parse(retrieved) + 3600000).toISOString();
+    const validUntil = response.provenance.validUntil;
     const source = sourceRecord(
       'met-norway-live',
       'MET Norway global location forecast',

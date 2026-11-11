@@ -12,7 +12,7 @@ export interface OnboardingSheetProps {
   vesselConfigured: boolean;
   defaultsConfigured: boolean;
   onFinish: () => void;
-  sampleData?: boolean;
+  onClose?: () => void;
   error?: string;
   busy?: boolean;
 }
@@ -87,14 +87,18 @@ export function OnboardingSheet({
   vesselConfigured,
   defaultsConfigured,
   onFinish,
-  sampleData = true,
+  onClose,
   error = '',
   busy = false,
 }: OnboardingSheetProps) {
   const { width, height } = useWindowDimensions();
   const ready = vesselConfigured && defaultsConfigured;
   return (
-    <Modal transparent animationType="fade" onRequestClose={() => {}}>
+    <Modal
+      transparent
+      animationType="fade"
+      onRequestClose={busy ? () => {} : (onClose ?? (() => {}))}
+    >
       <View
         style={{
           flex: 1,
@@ -169,13 +173,7 @@ export function OnboardingSheet({
               actionLabel="Configure defaults"
               disabled={busy}
             />
-            {sampleData ? (
-              <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
-                The bundled region contains sample data for testing. Reviewed nautical data is
-                required for real anchoring.
-              </Text>
-            ) : null}
-            <View style={{ gap: 9 }}>
+            <View style={{ gap: 12 }}>
               {error ? (
                 <View accessibilityLiveRegion="polite">
                   <Notice tone="warning">{error}</Notice>
@@ -184,6 +182,11 @@ export function OnboardingSheet({
               <Button onPress={onFinish} disabled={!ready || busy} icon="arrow-right">
                 {busy ? 'Saving setup…' : 'Continue to app tour'}
               </Button>
+              {onClose ? (
+                <Button secondary disabled={busy} onPress={onClose}>
+                  Back to Settings
+                </Button>
+              ) : null}
               {!ready ? (
                 <Text style={{ fontSize: 12, lineHeight: 18, color: c.muted, textAlign: 'center' }}>
                   Complete both steps to continue.

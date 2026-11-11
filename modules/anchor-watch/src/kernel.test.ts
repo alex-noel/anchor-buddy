@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { WatchKernel, distanceMetres, normalizeArmOptions } from './kernel';
+import { WatchKernel, distanceMetres, normalizeArmOptions } from './testing/kernel';
 import type { ArmOptions, WatchFix } from './types';
 
 const start = 1_700_000_000_000;

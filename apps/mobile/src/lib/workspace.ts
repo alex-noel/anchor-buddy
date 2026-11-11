@@ -3,6 +3,7 @@ import {
   type Assessment,
   type FeeStatus,
   type PlaceKind,
+  type Position,
   type SearchRequest,
 } from '@anchor-buddy/domain';
 export interface MapLayers {
@@ -29,6 +30,8 @@ export interface SavedSearch {
   id: string;
   name: string;
   savedAt: string;
+  evidence?: 'non-synthetic';
+  requiresReassessment?: boolean;
   packId: string;
   packVersion: string;
   vesselName: string;
@@ -42,6 +45,7 @@ export interface SavedSearch {
     total: number | null;
     currency: string | null;
   }[];
+  selectedPosition?: Position;
 }
 /** Start a new search at the next local whole hour, preserving the configured stay duration. */
 export function freshSearch(defaults: SearchRequest, now = new Date()): SearchRequest {
@@ -57,6 +61,12 @@ export function freshSearch(defaults: SearchRequest, now = new Date()): SearchRe
     arrival: arrival.toISOString(),
     departure: new Date(arrival.getTime() + duration).toISOString(),
   };
+}
+
+/** An expired saved stay needs an explicit date review, not a search in the past. */
+export function prepareSavedSearch(search: SearchRequest, now = new Date()) {
+  const needsDateReview = Date.parse(search.departure) <= now.getTime();
+  return { needsDateReview, search: needsDateReview ? freshSearch(search, now) : { ...search } };
 }
 export function readSavedSearches(value: unknown): SavedSearch[] {
   if (!Array.isArray(value)) return [];
@@ -87,6 +97,15 @@ export function readSavedSearches(value: unknown): SavedSearch[] {
       )
         return false;
       if (
+        item.selectedPosition !== undefined &&
+        (!Array.isArray(item.selectedPosition) ||
+          item.selectedPosition.length !== 2 ||
+          !item.selectedPosition.every(Number.isFinite) ||
+          Math.abs(item.selectedPosition[0]) > 180 ||
+          Math.abs(item.selectedPosition[1]) > 85)
+      )
+        return false;
+      if (
         item.results.length > 300 ||
         item.results.some(
           (r: SavedSearch['results'][number]) =>
@@ -104,7 +123,12 @@ export function readSavedSearches(value: unknown): SavedSearch[] {
       ids.add(item.id);
       return true;
     })
-    .slice(0, 30);
+    .slice(0, 30)
+    .map((item) =>
+      item.evidence === 'non-synthetic'
+        ? item
+        : { ...item, results: [], requiresReassessment: true },
+    );
 }
 export function stayLabel(search: SearchRequest) {
   const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: 'numeric' };

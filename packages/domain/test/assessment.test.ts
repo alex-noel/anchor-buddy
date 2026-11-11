@@ -3,9 +3,6 @@ import assert from 'node:assert/strict';
 import {
   areaContainsDisk,
   assessCandidate,
-  createDefaultSearch,
-  createDemoPack,
-  DEFAULT_VESSEL,
   destination,
   diskIntersectsArea,
   estimateCost,
@@ -17,6 +14,7 @@ import {
   validateSearch,
   validateVessel,
 } from '../src/index.ts';
+import { createDefaultSearch, createDemoPack, DEFAULT_VESSEL } from '../src/testing.ts';
 import type {
   Candidate,
   Place,
@@ -176,8 +174,29 @@ test('unknown bounds, unreviewed survey, mismatched datum and uncertain tides ne
   ]) {
     const f = fixture();
     mutate(f);
-    assert.equal(result(f).status, 'insufficient_evidence');
+    const assessment = result(f);
+    assert.equal(assessment.status, 'insufficient_evidence');
+    assert.equal(assessment.requiredRodeM, null);
+    assert.equal(assessment.swingRadiusM, null);
   }
+});
+
+test('an unresolved expanded footprint never publishes its provisional radius or rode', () => {
+  const f = fixture();
+  const p = destination(anchor(f.pack).position, 90, 30);
+  f.pack.depths.push({
+    ...f.pack.depths[0]!,
+    id: 'unknown-outer-depth',
+    geometry: rectangle(p[0], p[1] - 0.0001, p[0] + 0.0001, p[1] + 0.0001),
+    maxDepthM: null,
+  });
+  const assessment = result(f);
+  assert.ok(
+    codes(assessment).includes('footprint_unresolved'),
+    'Expanded depth uncertainty must leave the footprint unresolved.',
+  );
+  assert.equal(assessment.requiredRodeM, null);
+  assert.equal(assessment.swingRadiusM, null);
 });
 
 test('chart seams do not produce invented continuous coverage', () => {
@@ -190,6 +209,8 @@ test('chart seams do not produce invented continuous coverage', () => {
   ];
   assert.ok(codes(result(f)).includes('depth_coverage'));
   assert.equal(result(f).status, 'insufficient_evidence');
+  assert.equal(result(f).swingRadiusM, null);
+  assert.equal(result(f).requiredRodeM, null);
 });
 
 test('forecast and tide gaps include departure contingency', () => {
@@ -235,6 +256,7 @@ test('real pack requires maritime review, nonsynthetic sources and reviewed equi
   f.pack.validation = { status: 'unreviewed', notice: 'Not reviewed' };
   assert.ok(codes(result(f)).includes('unreviewed_pack'));
   assert.ok(codes(result(f)).includes('scope_unreviewed'));
+  assert.equal(result(f).swingRadiusM, null);
   f.pack.validation = {
     status: 'reviewed',
     notice: 'Reviewed',
@@ -260,9 +282,13 @@ test('scope must be provided, equipment-specific and within reviewed environment
   const f = fixture();
   f.vessel.anchor.scopeGuidance = null;
   assert.ok(codes(result(f)).includes('scope_unreviewed'));
+  assert.equal(result(f).requiredRodeM, null);
+  assert.equal(result(f).swingRadiusM, null);
   const g = fixture();
   g.vessel.anchor.scopeGuidance!.maxGustKnots = 18;
   assert.ok(codes(result(g)).includes('scope_conditions'));
+  assert.equal(result(g).requiredRodeM, null);
+  assert.equal(result(g).swingRadiusM, null);
 });
 
 test('restriction jurisdiction and effective intervals are resolved conservatively', () => {
@@ -551,8 +577,32 @@ test('dock vessel footprint includes beam, including wide multihull corners', ()
     f.search,
     f.pack,
   );
-  assert.ok(assessment.swingRadiusM! > 13);
+  assert.equal(assessment.requiredRodeM, null);
+  assert.equal(assessment.swingRadiusM, null);
   assert.ok(codes(assessment).includes('hazard_obstruction'));
+});
+
+test('mooring swing requires a published reach instead of a vessel-only placeholder', () => {
+  const f = fixture();
+  const place = f.pack.places.find((p) => p.kind === 'mooring')!;
+  const candidate: Candidate = {
+    id: place.id,
+    name: place.name,
+    kind: place.kind,
+    position: place.position,
+  };
+  const expected =
+    place.mooringSwingRadiusM! + f.vessel.lengthM + f.vessel.beamM / 2 + f.search.safetyMarginM;
+  const known = assessCandidate(candidate, f.vessel, f.search, f.pack);
+  assert.equal(known.swingRadiusM, expected);
+  assert.equal(known.requiredRodeM, null);
+  delete place.mooringSwingRadiusM;
+  const unknown = assessCandidate(candidate, f.vessel, f.search, f.pack);
+  assert.equal(unknown.swingRadiusM, null);
+  assert.ok(
+    codes(unknown).includes('mooring_footprint_unknown'),
+    'Missing published mooring reach must be reported.',
+  );
 });
 
 test('string booleans and invalid vessel-type rules are rejected at the JSON boundary', () => {

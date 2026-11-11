@@ -76,10 +76,10 @@ export default function AdvancedFiltersSheet({
             secondary
             onPress={() => {
               setDraft(DEFAULT_FILTERS);
-              setBed(['sand']);
+              setBed([]);
             }}
           >
-            Reset
+            Reset all filters
           </Button>
         </View>
         <View style={{ flex: 1 }}>

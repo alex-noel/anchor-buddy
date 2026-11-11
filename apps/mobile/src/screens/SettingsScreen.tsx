@@ -13,11 +13,11 @@ import * as Crypto from 'expo-crypto';
 import * as Watch from '@anchor-buddy/anchor-watch';
 import type { RegionPack, UnitSystem, VesselProfile } from '@anchor-buddy/domain';
 import { Button, Card, Chip, Eyebrow, Field, Icon, Notice } from '../components/ui';
-import SelectField from '../components/SelectField';
 import { colors as c } from '../theme';
 import { depth, localTime } from '../lib/units';
 import { setLocal } from '../lib/storage';
 import { providerBase } from '../lib/regionalDataCore';
+import type { Connectivity } from '../lib/connectivityCore';
 import { getAPIBase } from '../lib/regionalData';
 import { installPack, validateManifest, validSegment } from '../lib/packInstall';
 import { beginPackStage, downloadOfflineChart, loadInstalledChartStyle } from '../lib/packFiles';
@@ -108,20 +108,16 @@ export default function SettingsScreen({
   savedAt,
   onSave,
   onPack,
-  onDemo,
   vessel,
   onEditVessel,
   onEditDefaults,
   onTour,
   onSetup,
-  language = 'en',
-  setLanguage,
   layers,
   setLayers,
   onDownloadMap,
   onViewData,
-  onUseLiveData,
-  sampleMode = false,
+  connectivity = 'unknown',
 }: {
   pack: RegionPack;
   units: UnitSystem;
@@ -131,7 +127,6 @@ export default function SettingsScreen({
   savedAt: string | null;
   onSave: () => Promise<void>;
   onPack: (p: RegionPack) => void;
-  onDemo: () => void;
   vessel?: VesselProfile;
   onEditVessel?: () => void;
   onEditDefaults?: () => void;
@@ -143,8 +138,7 @@ export default function SettingsScreen({
   setLayers?: (layers: MapLayerDefaults) => void;
   onDownloadMap?: () => void;
   onViewData?: () => void;
-  onUseLiveData?: () => void;
-  sampleMode?: boolean;
+  connectivity?: Connectivity;
 }) {
   const { width } = useWindowDimensions();
   const [showSources, setShowSources] = useState(false);
@@ -158,6 +152,9 @@ export default function SettingsScreen({
   const [regions, setRegions] = useState<
     { id: string; version?: string; label: string; releaseStatus: string; synthetic: boolean }[]
   >([]);
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
+  const hasEvidence = pack.sources.some((source) => source.synthetic === false);
+  const networkUnavailable = offline || connectivity === 'offline';
   const [chartAvailable, setChartAvailable] = useState(false);
   const [chartReady, setChartReady] = useState(false);
   useEffect(() => {
@@ -257,11 +254,17 @@ export default function SettingsScreen({
       )
     )
       throw new Error('The provider returned invalid region records.');
-    setRegions(items as typeof regions);
+    const realRegions = (items as typeof regions).filter((item) => item.synthetic === false);
+    setRegions(realRegions);
+    setCatalogueLoaded(true);
     try {
       await setLocal('provider-api-url', address);
       setApi(address);
-      setMessage('Catalogue loaded and API address saved. Only reviewed regions can be installed.');
+      setMessage(
+        realRegions.length
+          ? 'Connected and API address saved. Only reviewed regions can be installed.'
+          : 'Connected and API address saved. Live searches are available; this server has no reviewed regional packs to download.',
+      );
     } catch {
       setMessage('Catalogue loaded, but the API address could not be saved on this device.');
     }
@@ -361,7 +364,7 @@ export default function SettingsScreen({
           <SettingRow
             title={vessel?.name || 'Configure your vessel'}
             detail={
-              vessel
+              vessel?.name && vessel.lengthM > 0
                 ? `${depth(vessel.lengthM, units)} length · ${depth(vessel.loadedDraftM, units)} draft · ${depth(vessel.anchor.usableLengthM, units)} rode`
                 : 'Dimensions, anchor model and equipment limits'
             }
@@ -396,13 +399,12 @@ export default function SettingsScreen({
               : 'Distances in miles, depths in feet, speed in mph.'}{' '}
           Configuration fields show their own units.
         </Text>
-        <SelectField
-          label="Language"
-          value={language}
-          options={[{ value: 'en', label: 'English' }]}
-          onChange={() => setLanguage?.('en')}
-          help="Additional languages are not available yet."
-        />
+        <View style={{ gap: 5 }}>
+          <Text style={{ fontSize: 14, fontWeight: '600', color: c.ink }}>Language · English</Text>
+          <Text style={{ fontSize: 12, color: c.muted, lineHeight: 18 }}>
+            More languages will appear here when translations are available.
+          </Text>
+        </View>
       </Card>
       {layers && setLayers ? (
         <Card>
@@ -415,7 +417,7 @@ export default function SettingsScreen({
           />
           <LayerRow
             label="Seabed"
-            detail="Reviewed seabed evidence where available. Seabed remains unknown outside reviewed coverage."
+            detail="Reviewed seabed evidence where available, plus online EMODnet European substrate context. Context does not establish anchor holding or habitat permission."
             value={layers.bedding}
             onChange={(value) => setLayers({ ...layers, bedding: value })}
           />
@@ -446,38 +448,55 @@ export default function SettingsScreen({
             View current sources & coverage
           </Button>
         ) : null}
-        <View style={{ flexDirection: 'row', gap: 14, alignItems: 'center' }}>
-          <View style={{ flex: 1, gap: 6 }}>
-            <Text style={{ fontSize: 18, fontWeight: '600', color: c.ink }}>{pack.name}</Text>
-            <Text style={{ fontSize: 12, color: c.muted }}>Version {pack.version}</Text>
-          </View>
-          <Icon name="download-cloud" color={c.green} size={24} />
-        </View>
-        <Text style={{ fontSize: 12, color: c.muted, lineHeight: 20 }}>
-          Valid until {localTime(pack.validUntil)}
-          {'\n'}
-          {savedAt ? 'Saved ' + localTime(savedAt) : 'Not saved on this device'}
-        </Text>
-        <Button
-          disabled={busy}
-          secondary
-          icon="download"
-          onPress={() =>
-            run(async () => {
-              await onSave();
-              setMessage(
-                'Analysis snapshot saved with its original evidence dates. Basemap areas can be downloaded separately.',
-              );
-            })
-          }
-        >
-          Save analysis offline
-        </Button>
+        {hasEvidence ? (
+          <>
+            <View style={{ flexDirection: 'row', gap: 14, alignItems: 'center' }}>
+              <View style={{ flex: 1, gap: 6 }}>
+                <Text style={{ fontSize: 18, fontWeight: '600', color: c.ink }}>{pack.name}</Text>
+                <Text style={{ fontSize: 12, color: c.muted }}>Version {pack.version}</Text>
+              </View>
+              <Icon name="download-cloud" color={c.green} size={24} />
+            </View>
+            <Text style={{ fontSize: 12, color: c.muted, lineHeight: 20 }}>
+              {Date.parse(pack.validUntil) < Date.now()
+                ? 'Evidence expired'
+                : 'Evidence valid until'}{' '}
+              {localTime(pack.validUntil)}
+              {'\n'}
+              {savedAt ? 'Saved ' + localTime(savedAt) : 'Not saved on this device'}
+            </Text>
+            {!savedAt ? (
+              <Button
+                disabled={busy}
+                secondary
+                icon="download"
+                onPress={() =>
+                  run(async () => {
+                    await onSave();
+                    setMessage(
+                      'Analysis snapshot saved with its original evidence dates. Basemap areas can be downloaded separately.',
+                    );
+                  })
+                }
+              >
+                Save evidence offline
+              </Button>
+            ) : (
+              <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
+                Available offline. Saving does not extend forecast or source validity.
+              </Text>
+            )}
+          </>
+        ) : (
+          <Notice>
+            Search an area or open saved regional data to see its sources and save evidence offline.
+          </Notice>
+        )}
         {chartAvailable ? (
           <View style={{ gap: 10 }}>
             <Button
               secondary
-              disabled={busy || Platform.OS === 'web'}
+              disabled={busy || networkUnavailable || Platform.OS === 'web'}
               icon="map"
               onPress={() =>
                 run(async () => {
@@ -498,20 +517,24 @@ export default function SettingsScreen({
               </Text>
             ) : null}
           </View>
-        ) : (
+        ) : hasEvidence ? (
           <Text style={{ fontSize: 12, color: c.muted, lineHeight: 18 }}>
             No reviewed chart tiles are bundled for this region. You can still download its
             worldwide basemap above; it does not provide nautical clearance evidence.
           </Text>
-        )}
+        ) : null}
         <LayerRow
           label="Offline planning"
-          detail="Use downloaded data; forecasts keep their expiry dates"
+          detail="Prefer downloaded data even when connected; forecasts keep their expiry dates"
           value={offline}
           onChange={setOffline}
         />
         <Text style={{ fontSize: 12, lineHeight: 18, color: c.muted }}>
-          Reconnect before a stay to check updated weather, restrictions and notices.
+          {connectivity === 'offline'
+            ? 'No network connection. Downloaded areas are used automatically.'
+            : 'Maps use downloaded areas automatically when the connection drops.'}{' '}
+          Active live searches refresh after reconnection; reviewed packs must be updated
+          separately.
         </Text>
       </Card>
       <Card>
@@ -533,10 +556,37 @@ export default function SettingsScreen({
         </Pressable>
         {showProvider ? (
           <View style={{ gap: 16 }}>
-            <Field label="Regional API address" value={api} onChange={setApi} />
-            <Button secondary disabled={busy} onPress={() => run(load)} icon="refresh-cw">
+            <Field
+              label="Regional API address"
+              disabled={busy}
+              value={api}
+              onChange={(value) => {
+                setApi(value);
+                setRegions([]);
+                setCatalogueLoaded(false);
+                setMessage('');
+              }}
+              help="Use the Anchor Buddy server address. Provider API keys are managed on the server."
+            />
+            <Button
+              secondary
+              disabled={busy || networkUnavailable}
+              onPress={() => run(load)}
+              icon="refresh-cw"
+            >
               {busy ? 'Connecting…' : 'Connect & check regions'}
             </Button>
+            {networkUnavailable ? (
+              <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
+                Turn off Offline planning and reconnect to check the server or download a region.
+              </Text>
+            ) : null}
+            {catalogueLoaded && !regions.length ? (
+              <Notice>
+                No reviewed regional packs are published on this server yet. Use Explore for live
+                places and available forecasts.
+              </Notice>
+            ) : null}
             {regions.map((r) => (
               <View
                 key={r.id}
@@ -548,11 +598,16 @@ export default function SettingsScreen({
                 <Button
                   small
                   secondary
-                  disabled={busy || r.releaseStatus !== 'reviewed'}
+                  disabled={busy || networkUnavailable || r.releaseStatus !== 'reviewed'}
                   onPress={() => run(() => download(r.id, r.version))}
                 >
                   Download reviewed region
                 </Button>
+                {r.releaseStatus !== 'reviewed' ? (
+                  <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
+                    This region cannot be installed until its nautical evidence has been reviewed.
+                  </Text>
+                ) : null}
               </View>
             ))}
             <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
@@ -582,8 +637,10 @@ export default function SettingsScreen({
         </Pressable>
         {showSources ? (
           <View style={{ gap: 16 }}>
-            <Notice tone={pack.validation.status === 'synthetic' ? 'warning' : 'info'}>
-              {pack.validation.notice}
+            <Notice>
+              {hasEvidence
+                ? pack.validation.notice
+                : 'No regional evidence is loaded. Search an area or open saved data to inspect sources.'}
             </Notice>
             {pack.sources.map((source) => (
               <View key={source.id} style={{ gap: 6 }}>
@@ -594,7 +651,6 @@ export default function SettingsScreen({
                 </Pressable>
                 <Text style={{ fontSize: 12, color: c.muted, lineHeight: 18 }}>
                   {source.attribution} · {source.license}
-                  {source.synthetic ? ' · Sample data' : ''}
                 </Text>
               </View>
             ))}
@@ -631,18 +687,6 @@ export default function SettingsScreen({
       </Card>
       {message ? <Notice>{message}</Notice> : null}
       <View style={{ gap: 12 }}>
-        {sampleMode && onUseLiveData ? (
-          <Button disabled={busy} icon="globe" onPress={onUseLiveData}>
-            Use live regional data
-          </Button>
-        ) : null}
-        <Button secondary disabled={busy} icon="refresh-cw" onPress={onDemo}>
-          {sampleMode ? 'Refresh optional sample data' : 'Load optional sample workspace'}
-        </Button>
-        <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
-          Sample geometry is for trying controls and assessments. It does not describe a real
-          anchorage.
-        </Text>
         <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
           Anchor Buddy 0.1 · Profiles and watch logs are stored on this device.
         </Text>

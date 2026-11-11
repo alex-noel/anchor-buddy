@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  createDefaultSearch,
-  DEFAULT_VESSEL,
-  searchRegion,
-  validateRegionPack,
-} from '@anchor-buddy/domain';
+import { searchRegion, validateRegionPack } from '@anchor-buddy/domain';
+import { createDefaultSearch, DEFAULT_VESSEL as TEST_VESSEL } from '@anchor-buddy/domain/testing';
+const DEFAULT_VESSEL = { ...TEST_VESSEL, anchor: { ...TEST_VESSEL.anchor, scopeGuidance: null } };
 import { GovernmentHttp, ProviderError } from '../src/providers/http.js';
 import type { HttpTransport } from '../src/providers/contracts.js';
 import { OverpassProvider } from '../src/providers/overpass.js';
@@ -242,7 +239,11 @@ test('NWS keeps exact intervals, missing waves and dated official warnings', asy
   const http: HttpTransport = {
     async json<T>(url: string) {
       return {
-        provenance: { ...provenance, url },
+        provenance: {
+          ...provenance,
+          url,
+          validUntil: url.includes('/alerts/') ? '2026-11-03T12:02:00Z' : '2026-11-03T12:03:00Z',
+        },
         data: (url.includes('/points/')
           ? { properties: { forecastGridData: 'https://api.weather.gov/gridpoints/KEY/1,2' } }
           : url.includes('/alerts/')
@@ -281,6 +282,32 @@ test('NWS keeps exact intervals, missing waves and dated official warnings', asy
   assert.equal(result.frames[0]!.waveM, null);
   assert.deepEqual(result.frames[0]!.warnings, ['Special Marine Warning']);
   assert.equal(result.frames[0]!.validUntil, '2026-11-03T13:00:00.000Z');
+  assert.deepEqual(
+    result.sources.map((source) => source.validUntil),
+    ['2026-11-03T12:03:00Z', '2026-11-03T12:02:00Z'],
+  );
+  assert.equal(result.status.validUntil, '2026-11-03T12:02:00.000Z');
+});
+
+test('OSM and optional marine adapters preserve transport expiry instead of inventing a longer freshness window', async () => {
+  const expiry = '2026-11-03T12:02:00Z';
+  const response = (data: unknown): HttpTransport => ({
+    async json<T>(url: string) {
+      return { data: data as T, provenance: { ...provenance, url, validUntil: expiry } };
+    },
+  });
+  const places = await new OverpassProvider(response(osm)).discover(input);
+  assert.equal(places.source.validUntil, expiry);
+  assert.equal(places.status.validUntil, expiry);
+  const marine = await new OpenMeteoMarineProvider(
+    response({
+      hourly: { time: [now.valueOf() / 1000], wave_height: [0.4], swell_wave_height: [null] },
+      hourly_units: { wave_height: 'm', swell_wave_height: 'm' },
+    }),
+    { mode: 'self-hosted', endpoint: 'https://fixture.example/marine' },
+  ).forecast(input);
+  assert.equal(marine.source.validUntil, expiry);
+  assert.equal(marine.status.validUntil, expiry);
 });
 
 test('map proxy rejects host tricks and credentials; handles encoded glyph spaces without client credentials', async () => {

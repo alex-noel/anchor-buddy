@@ -1,8 +1,5 @@
 import Fastify, { LogController } from 'fastify';
 import {
-  createDemoPack,
-  DEFAULT_VESSEL,
-  createDefaultSearch,
   searchRegion,
   estimateCost,
   validateVessel,
@@ -13,8 +10,12 @@ import {
   type SearchOptions,
   type RegionPack,
 } from '@anchor-buddy/domain';
-import { FilePackStore, PackError, type PackStore } from './packs.js';
-import { PROVIDERS } from './providers/contracts.js';
+import { FilePackStore, PackError, assertRealAssessment, type PackStore } from './packs.js';
+import {
+  capabilityDeploymentFromEnvironment,
+  parseProviderCapabilityArea,
+  resolveProviderCapabilities,
+} from './providers/capabilities.js';
 import { GovernmentHttp, ProviderError } from './providers/http.js';
 import { NwsProvider } from './providers/nws.js';
 import { CoopsProvider, type StationMapping } from './providers/coops.js';
@@ -42,7 +43,6 @@ interface SearchBody {
   search: SearchRequest;
   options?: SearchOptions;
 }
-const DEMO_ID = 'florida-keys-demo';
 
 function optionsErrors(value: unknown): string[] {
   if (value === undefined) return [];
@@ -92,6 +92,7 @@ export function createApp(options: AppOptions = {}) {
     logController: new LogController({ disableRequestLogging: true }),
   });
   const store = options.packStore ?? new FilePackStore(process.env.PACK_ROOT ?? './data/packs');
+  const capabilityDeployment = capabilityDeploymentFromEnvironment(process.env);
   const now = options.now ?? (() => new Date());
   const userAgent = process.env.NWS_USER_AGENT ?? PROJECT_USER_AGENT;
   const weather =
@@ -153,14 +154,17 @@ export function createApp(options: AppOptions = {}) {
   app.options('/*', async (_request, reply) => reply.code(204).send());
 
   async function pack(regionId: string, version?: string): Promise<RegionPack> {
-    const livePack = discovery.get(regionId, version);
-    if (livePack) return livePack;
-    const value =
-      regionId === DEMO_ID ? createDemoPack(now()) : await store.assessment(regionId, version);
+    const livePack = await discovery.restore(regionId, version);
+    if (livePack) {
+      assertRealAssessment(livePack);
+      return livePack;
+    }
+    const value = await store.assessment(regionId, version);
+    assertRealAssessment(value);
     const errors = validateRegionPack(value);
     if (errors.length)
       throw new PackError('INVALID_ASSESSMENT', 'Regional assessment data failed validation', 503);
-    if (regionId !== DEMO_ID && value.validation.status !== 'reviewed')
+    if (value.validation.status !== 'reviewed')
       throw new PackError('REVIEW_REQUIRED', 'Assessment snapshot is not reviewed', 503);
     return value;
   }
@@ -178,6 +182,8 @@ export function createApp(options: AppOptions = {}) {
       errors.push('regionId is required');
     if (body?.search?.maxDistanceNm > 30)
       errors.push('Search radius exceeds this regional service limit (30 nm)');
+    if (body?.vessel?.anchor?.scopeGuidance?.reviewStatus === 'demo')
+      errors.push('Demonstration equipment guidance is not supported');
     if (Date.parse(body?.search?.departure) - Date.parse(body?.search?.arrival) > 7 * 86400000)
       errors.push('Search stay exceeds seven days');
     return errors;
@@ -213,19 +219,15 @@ export function createApp(options: AppOptions = {}) {
     nauticalRelease: 'review-required',
     liveDiscovery: DISCOVERY_CAPABILITIES,
   }));
-  app.get('/v1/providers', async () => ({ providers: PROVIDERS }));
+  app.get('/v1/providers', async (request, reply) => {
+    const selection = parseProviderCapabilityArea(request.query);
+    if (selection.status === 'invalid')
+      return reply.code(400).send({ error: 'INVALID_PROVIDER_AREA' });
+    return resolveProviderCapabilities(capabilityDeployment, selection.area);
+  });
   app.get('/v1/regions', async () => ({
     discovery: DISCOVERY_CAPABILITIES,
-    regions: [
-      {
-        id: DEMO_ID,
-        version: 'synthetic',
-        label: 'Florida Keys demonstration — invented data',
-        synthetic: true,
-        releaseStatus: 'demo-only',
-      },
-      ...(await store.regions()),
-    ],
+    regions: (await store.regions()).filter((region) => region.synthetic === false),
   }));
   app.post<{ Body: unknown }>('/v1/regions/discover', async (request, reply) =>
     reply.header('Cache-Control', 'no-store').send(await discovery.discover(request.body)),
@@ -244,13 +246,6 @@ export function createApp(options: AppOptions = {}) {
       .header('Cache-Control', resource.cacheControl)
       .send(resource.bytes);
   });
-  app.get('/v1/demo', async () => ({
-    pack: createDemoPack(now()),
-    vessel: DEFAULT_VESSEL,
-    search: createDefaultSearch(now()),
-    warning:
-      'Synthetic demonstration. Do not use these positions, depths, tariffs or forecasts for navigation or anchoring.',
-  }));
   app.get<{ Params: { regionId: string }; Querystring: { version?: string } }>(
     '/v1/regions/:regionId/manifest',
     async (request, reply) => {

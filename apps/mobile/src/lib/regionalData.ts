@@ -51,7 +51,12 @@ async function request(path: string, init: RequestInit = {}, signal?: AbortSigna
   }
 }
 
-export async function discoverRegion(search: SearchRequest, signal?: AbortSignal) {
+export async function discoverRegion(
+  search: SearchRequest,
+  signal?: AbortSignal,
+  regionName?: string,
+  timezone?: string,
+) {
   if (search.maxDistanceNm > 25)
     throw new Error(
       'Live discovery currently supports areas up to 25 nm. Reduce the radius; larger map areas can still be downloaded separately.',
@@ -70,6 +75,8 @@ export async function discoverRegion(search: SearchRequest, signal?: AbortSignal
           radiusNm: Math.max(0.25, search.maxDistanceNm),
           from: search.arrival,
           until,
+          ...(regionName?.trim() ? { name: regionName.trim().slice(0, 100) } : {}),
+          ...(timezone ? { timezone } : {}),
         }),
       },
       signal,

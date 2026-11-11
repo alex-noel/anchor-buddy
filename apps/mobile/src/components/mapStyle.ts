@@ -6,6 +6,7 @@ import {
   type Bedding,
   type Position,
   type RegionPack,
+  type UnitSystem,
 } from '@anchor-buddy/domain';
 import { colors as c } from '../theme';
 import { onlineWorldMapStyle } from '../lib/worldMapsCore';
@@ -18,6 +19,7 @@ export interface ChartProps {
   onSelect: (id: string) => void;
   onPin: (p: Position) => void;
   onlineBasemap: boolean;
+  units?: UnitSystem;
   showDepth?: boolean;
   showBedding?: boolean;
   showMarks?: boolean;
@@ -231,18 +233,29 @@ export function buildMapStyle(
           },
         ]
       : [];
+  const europeanBedding =
+    online && bedding
+      ? [
+          {
+            id: 'anchorbuddy-european-substrate',
+            type: 'raster',
+            source: 'anchorbuddy-emodnet-substrate',
+            minzoom: 4,
+            maxzoom: 13,
+            paint: { 'raster-opacity': 0.42 },
+          },
+        ]
+      : [];
   const features = pack.depths.map((d) => ({
     type: 'Feature',
     properties: { min: d.minDepthM, max: d.maxDepthM },
     geometry: d.geometry,
   }));
-  // Coverage and the fixture's outer shore mask are analysis inputs, not chart features.
-  const hazards = pack.hazards
-    .filter(
-      (d) =>
-        !(pack.validation.status === 'synthetic' && d.kind === 'shore' && d.id === 'demo-shore'),
-    )
-    .map((d) => ({ type: 'Feature', properties: { kind: d.kind }, geometry: d.geometry }));
+  const hazards = pack.hazards.map((d) => ({
+    type: 'Feature',
+    properties: { kind: d.kind },
+    geometry: d.geometry,
+  }));
   const holdings = (pack.holdingAreas ?? []).map((area) => ({
     type: 'Feature',
     properties: { holding: area.holding },
@@ -253,6 +266,22 @@ export function buildMapStyle(
     version: 8 as const,
     sources: {
       ...((base?.sources as Record<string, unknown>) ?? {}),
+      ...(online && bedding
+        ? {
+            'anchorbuddy-emodnet-substrate': {
+              type: 'raster',
+              tiles: [
+                'https://drive.emodnet-geology.eu/geoserver/gtk/wms?service=WMS&version=1.1.1&request=GetMap&layers=seabed_substrate_1m,seabed_substrate_250k&styles=&format=image/png&transparent=true&srs=EPSG:3857&bbox={bbox-epsg-3857}&width=256&height=256',
+              ],
+              bounds: [-36, 15, 43, 85] as [number, number, number, number],
+              tileSize: 256,
+              minzoom: 4,
+              maxzoom: 10,
+              attribution:
+                '<a href="https://emodnet.ec.europa.eu/en/geology">EMODnet Geology</a> · Broad-scale substrate context; not anchoring evidence',
+            },
+          }
+        : {}),
       ...(online && depth
         ? {
             'anchorbuddy-gebco': {
@@ -322,9 +351,11 @@ export function buildMapStyle(
       },
     },
     layers: [
-      { id: 'anchorbuddy-water', type: 'background', paint: { 'background-color': c.ocean } },
+      // Unknown/unloaded map regions stay neutral, rather than implying open water.
+      { id: 'anchorbuddy-water', type: 'background', paint: { 'background-color': '#E7EBEF' } },
       ...baseLayers.slice(0, split),
       ...globalBathymetry,
+      ...europeanBedding,
       ...baseLayers.slice(split),
       ...(depth
         ? [

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { WatchSimulator } from './simulator';
+import { WatchSimulator } from './testing/simulator';
 import type { ArmOptions, WatchStatus } from './types';
 
 const options: ArmOptions = {

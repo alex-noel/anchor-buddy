@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDemoPack, distanceM, pointInArea, rectangle } from '@anchor-buddy/domain';
+import { distanceM, pointInArea, rectangle } from '@anchor-buddy/domain';
+import { createDemoPack } from '@anchor-buddy/domain/testing';
 import {
   buildMapStyle,
   circleGeometry,
@@ -26,12 +27,13 @@ test('depth and seabed overlays default on and can be independently disabled', (
   assert.equal(evidenceLabels(fixture, false, false).length, 0);
 });
 
-test('map hides fixture shore mask without removing analytical hazards or changing pack geometry', () => {
+test('map preserves supplied hazard geometry without fixture-specific rendering exceptions', () => {
   const fixture = pack(),
     before = JSON.stringify(fixture);
   const style = buildMapStyle(fixture, undefined, false);
   const display = style.sources['anchorbuddy-hazards'].data.features;
-  assert.ok(display.every((feature) => feature.properties.kind !== 'shore'));
+  assert.equal(display.length, fixture.hazards.length);
+  assert.ok(display.some((feature) => feature.properties.kind === 'shore'));
   assert.ok(display.some((feature) => feature.properties.kind === 'obstruction'));
   assert.equal(JSON.stringify(fixture), before);
   fixture.validation.status = 'reviewed';
@@ -40,6 +42,31 @@ test('map hides fixture shore mask without removing analytical hazards or changi
       (feature) => feature.properties.kind === 'shore',
     ),
   );
+});
+
+test('European substrate imagery is bounded online context beneath analysis bedding', () => {
+  const fixture = pack();
+  const before = JSON.stringify(fixture);
+  const style = buildMapStyle(fixture, undefined, true);
+  const source = (style.sources as any)['anchorbuddy-emodnet-substrate'];
+  assert.deepEqual(source.bounds, [-36, 15, 43, 85]);
+  assert.ok(source.tiles[0].includes('seabed_substrate_250k'));
+  const layers = style.layers as any[];
+  assert.ok(
+    layers.findIndex((layer) => layer.id === 'anchorbuddy-european-substrate') <
+      layers.findIndex((layer) => layer.id === 'anchorbuddy-bedding-fill'),
+  );
+  assert.equal(
+    (buildMapStyle(fixture, undefined, false).sources as any)['anchorbuddy-emodnet-substrate'],
+    undefined,
+  );
+  assert.equal(
+    (buildMapStyle(fixture, undefined, true, true, null, false).sources as any)[
+      'anchorbuddy-emodnet-substrate'
+    ],
+    undefined,
+  );
+  assert.equal(JSON.stringify(fixture), before);
 });
 
 test('depth labels state source bounds and datum without treating them as point soundings', () => {

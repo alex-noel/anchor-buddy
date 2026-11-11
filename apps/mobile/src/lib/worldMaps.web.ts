@@ -5,9 +5,11 @@ import { prepareOfflineShell } from './offlineShell';
 import {
   createWorldMapCache,
   fetchBoundedMapResource,
+  cachedWorldMapStyle,
+  mapAreaReadiness,
+  MAP_FONT_URL,
+  MAP_FONT,
   onlineWorldMapStyle,
-  worldVectorLayers,
-  WORLD_MAP_ATTRIBUTION,
   validMapId,
   type MapArea,
   type MapAreaManifest,
@@ -101,63 +103,82 @@ let registered = false;
 function registerProtocol() {
   if (registered) return;
   registered = true;
-  maplibregl.addProtocol('anchorbuddyworld', async (params) => {
+  maplibregl.addProtocol('anchorbuddyworld', async (params, abortController) => {
     const url = new URL(params.url);
     const path = decodeURIComponent(url.pathname.slice(1));
     const areas =
       url.hostname === 'glyphs'
-        ? (await listMapAreas()).filter((area) => area.status === 'complete')
+        ? (await listMapAreas()).filter((area) => area.usableZoom !== undefined)
         : (await listMapAreas()).filter(
-            (area) => area.id === url.hostname && area.status === 'complete',
+            (area) => area.id === url.hostname && area.usableZoom !== undefined,
           );
     for (const area of areas) {
-      const manifest = await cache.readVerifiedManifest(area.id);
+      let manifest: MapAreaManifest | null;
+      try {
+        manifest = await cache.readVerifiedManifest(area.id);
+      } catch {
+        continue;
+      }
       const relative = url.hostname === 'glyphs' ? `glyphs/${path.split('/').at(-1)}` : path;
       const record = manifest?.resources[relative];
       if (!record) continue;
       const bytes = await io.read(area.id, relative);
       if (!bytes || bytes.byteLength !== record.bytes || (await hash(bytes)) !== record.sha256) {
         void cache.verifyMapArea(area.id).catch(() => {});
-        throw new Error('Saved map integrity check failed. Redownload this area.');
+        continue;
       }
       return { data: new Uint8Array(bytes).buffer };
+    }
+    if (url.hostname === 'glyphs' && url.searchParams.get('online') === '1') {
+      const range = path
+        .split('/')
+        .at(-1)
+        ?.replace(/\.pbf$/, '');
+      if (range && /^\d+-\d+$/.test(range)) {
+        try {
+          const bytes = await fetchBoundedMapResource(
+            MAP_FONT_URL.replace('{fontstack}', encodeURIComponent(MAP_FONT)).replace(
+              '{range}',
+              range,
+            ),
+            abortController.signal,
+          );
+          return { data: new Uint8Array(bytes).buffer };
+        } catch {
+          /* Saved glyphs/geometry remain available during upstream failure. */
+        }
+      }
     }
     // Empty vector tiles keep areas outside downloaded coverage blank without network fallback.
     return { data: new ArrayBuffer(0) };
   });
 }
 export async function loadWorldMapStyle(online: boolean): Promise<Record<string, unknown> | null> {
-  if (online) return onlineWorldMapStyle();
-  requireCache();
+  try {
+    requireCache();
+  } catch {
+    return online ? onlineWorldMapStyle() : null;
+  }
   registerProtocol();
   const areas = (await listMapAreas()).filter(
-    (area) => area.status === 'complete' && validMapId(area.id),
+    (area) => area.usableZoom !== undefined && validMapId(area.id),
   );
-  const sources: Record<string, unknown> = {};
-  const layers: object[] = [];
+  const available: { area: MapArea; tiles: string }[] = [];
   for (const area of areas) {
-    const manifest = await cache.readVerifiedManifest(area.id);
-    if (!manifest || manifest.area.status !== 'complete') continue;
-    const source = `world-${area.id}`;
-    sources[source] = {
-      type: 'vector',
-      tiles: [`anchorbuddyworld://${area.id}/tiles/{z}/{x}/{y}.pbf`],
-      minzoom: 0,
-      maxzoom: area.maxZoom,
-      bounds:
-        area.bounds[0] < area.bounds[2] ? area.bounds : [-180, area.bounds[1], 180, area.bounds[3]],
-      attribution: WORLD_MAP_ATTRIBUTION,
-    };
-    layers.push(...worldVectorLayers(source, source));
+    try {
+      const manifest = await cache.readVerifiedManifest(area.id);
+      if (manifest)
+        available.push({
+          area: mapAreaReadiness(manifest),
+          tiles: `anchorbuddyworld://${area.id}/tiles/{z}/{x}/{y}.pbf`,
+        });
+    } catch {
+      /* One broken area must not hide other downloaded areas. */
+    }
   }
-  if (!layers.length) return null;
-  return {
-    version: 8,
-    glyphs: 'anchorbuddyworld://glyphs/{fontstack}/{range}.pbf',
-    sources,
-    layers: [
-      { id: 'world-background', type: 'background', paint: { 'background-color': '#F2F4F7' } },
-      ...layers,
-    ],
-  };
+  return cachedWorldMapStyle(
+    online,
+    available,
+    `anchorbuddyworld://glyphs/{fontstack}/{range}.pbf?online=${online ? 1 : 0}`,
+  );
 }

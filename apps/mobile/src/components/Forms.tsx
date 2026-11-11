@@ -16,7 +16,17 @@ import Sheet from './Sheet';
 import Chart from './Chart';
 import SelectField from './SelectField';
 import SeabedSelect from './SeabedSelect';
+import MapRegionPicker from './MapRegionPicker';
+import { MAP_REGIONS } from '../lib/mapRegions';
 import { parseInputDecimal } from '../lib/inputNumbers';
+import {
+  equipmentChanged,
+  moveStayArrival,
+  parseUnitDraft,
+  readCoordinateDraft,
+  readableFormErrors,
+  withDefaultStayDuration,
+} from '../lib/formDrafts';
 import LocalDateHourField from './LocalDateHourField';
 import { Button, Chip, Eyebrow, Field, Icon, Notice, s } from './ui';
 import { colors as c } from '../theme';
@@ -65,15 +75,23 @@ export function SearchSheet({
   units = 'nautical',
   mode = 'search',
   onFindLocation,
+  initialRegionId,
+  initialRegionName,
+  initialRegionTimezone,
+  initialAreaConfirmed = false,
 }: {
   search: SearchRequest;
-  onSave: (s: SearchRequest) => void;
+  onSave: (s: SearchRequest, selection?: { regionName: string; timezone: string }) => void;
   onClose: () => void;
   pack?: RegionPack;
   offline?: boolean;
   units?: UnitSystem;
   mode?: 'search' | 'defaults';
   onFindLocation?: (query: string) => Promise<{ name: string; position: Position }[]>;
+  initialRegionId?: string;
+  initialRegionName?: string;
+  initialRegionTimezone?: string;
+  initialAreaConfirmed?: boolean;
 }) {
   const [values, setValues] = useState<Record<NumericKey, string>>(
     () =>
@@ -81,11 +99,32 @@ export function SearchSheet({
         numericKeys.map((key) => [key, formatted(search[key] * numericUnit(key, units).ratio)]),
       ) as Record<NumericKey, string>,
   );
-  const [lat, setLat] = useState(String(search.origin[1]));
-  const [lon, setLon] = useState(String(search.origin[0]));
+  const numericReference = useRef<Record<NumericKey, number>>(
+    Object.fromEntries(numericKeys.map((key) => [key, search[key]])) as Record<NumericKey, number>,
+  );
+  const [areaConfirmed, setAreaConfirmed] = useState(initialAreaConfirmed || mode === 'defaults');
+  const [lat, setLat] = useState(
+    initialAreaConfirmed || mode === 'defaults' ? String(search.origin[1]) : '',
+  );
+  const [lon, setLon] = useState(
+    initialAreaConfirmed || mode === 'defaults' ? String(search.origin[0]) : '',
+  );
   const [visitMode, setVisitMode] = useState(search.visitMode);
   const [bedding, setBedding] = useState<Bedding[]>(() => getPreferredBeddings(search));
   const [locationQuery, setLocationQuery] = useState('');
+  const [selectedArea, setSelectedArea] = useState<
+    { id?: string; regionName: string; timezone: string } | undefined
+  >(() => {
+    const preset = MAP_REGIONS.find((region) => region.id === initialRegionId);
+    if (preset && preset.center.every((coordinate, index) => coordinate === search.origin[index]))
+      return { id: preset.id, regionName: preset.name, timezone: preset.timezone };
+    return initialRegionName
+      ? {
+          regionName: initialRegionName,
+          timezone: initialRegionTimezone ?? pack?.timezone ?? 'UTC',
+        }
+      : undefined;
+  });
   const [locationResults, setLocationResults] = useState<{ name: string; position: Position }[]>(
     [],
   );
@@ -94,30 +133,31 @@ export function SearchSheet({
   const locationRequest = useRef(0);
   const [arrival, setArrival] = useState(() => fromIsoToLocalHour(search.arrival));
   const [departure, setDeparture] = useState(() => fromIsoToLocalHour(search.departure));
+  const [stayHours, setStayHours] = useState(() =>
+    String(
+      Math.max(
+        1,
+        Math.round((Date.parse(search.departure) - Date.parse(search.arrival)) / 3_600_000),
+      ),
+    ),
+  );
   const [coordinatesOpen, setCoordinatesOpen] = useState(!pack);
   const [error, setError] = useState('');
   const valueInBaseUnits = (key: NumericKey) => {
     const ratio = numericUnit(key, units).ratio;
-    // A display-unit round trip must not silently change the stored safety threshold.
-    if (values[key] === formatted(search[key] * ratio)) return search[key];
-    return parseInputDecimal(values[key]) / ratio;
+    return parseUnitDraft(values[key], numericReference.current[key], ratio);
   };
   const radius = valueInBaseUnits('maxDistanceNm');
-  const position = useMemo<Position>(
-    () =>
-      lat.trim() &&
-      lon.trim() &&
-      Number.isFinite(parseInputDecimal(lat)) &&
-      Number.isFinite(parseInputDecimal(lon)) &&
-      Math.abs(parseInputDecimal(lat)) <= 85 &&
-      Math.abs(parseInputDecimal(lon)) <= 180
-        ? [parseInputDecimal(lon), parseInputDecimal(lat)]
-        : search.origin,
-    [lat, lon, search.origin],
-  );
+  const liveRadius = pack?.validation.status !== 'reviewed' && (mode === 'defaults' || !offline);
+  const minRadius = liveRadius ? 0.25 : 0.01;
+  const maxRadius = liveRadius ? 25 : 50;
+  const position = useMemo(() => readCoordinateDraft(lat, lon), [lat, lon]);
   const setPosition = (p: Position) => {
+    setAreaConfirmed(true);
+    setError('');
     setLat(p[1].toFixed(6));
     setLon(p[0].toFixed(6));
+    setSelectedArea(undefined);
   };
   const findLocation = async () => {
     if (!onFindLocation || !locationQuery.trim() || offline) return;
@@ -148,23 +188,49 @@ export function SearchSheet({
       label={label}
       suffix={numericUnit(key, units).label}
       numeric
+      required
       value={values[key]}
       help={help}
-      onChange={(v) => setValues((p) => ({ ...p, [key]: v }))}
+      onChange={(v) => {
+        setValues((p) => ({ ...p, [key]: v }));
+        setError('');
+      }}
     />
   );
-  const resizeArea = (factor: number) =>
+  const resizeArea = (factor: number) => {
+    const nextRadius = Math.max(
+      minRadius,
+      Math.min(maxRadius, (Number.isFinite(radius) ? radius : search.maxDistanceNm) * factor),
+    );
+    numericReference.current.maxDistanceNm = nextRadius;
     setValues((p) => ({
       ...p,
-      maxDistanceNm: formatted(
-        Math.max(
-          0.01,
-          Math.min(50, (Number.isFinite(radius) ? radius : search.maxDistanceNm) * factor),
-        ) * numericUnit('maxDistanceNm', units).ratio,
-      ),
+      maxDistanceNm: formatted(nextRadius * numericUnit('maxDistanceNm', units).ratio),
     }));
+    setError('');
+  };
   const save = () => {
-    const next: SearchRequest = {
+    if (mode === 'search' && !areaConfirmed) {
+      setError(
+        'Choose a coastal region, find a location, or enter your coordinates before searching.',
+      );
+      return;
+    }
+    if (mode === 'search' && !position) {
+      setCoordinatesOpen(true);
+      setError(
+        'Enter a complete latitude from −85 to 85 and longitude from −180 to 180, in decimal degrees.',
+      );
+      return;
+    }
+    if (!Number.isFinite(radius) || radius < minRadius || radius > maxRadius) {
+      const unit = numericUnit('maxDistanceNm', units);
+      setError(
+        `Search radius must be between ${formatted(minRadius * unit.ratio)} and ${formatted(maxRadius * unit.ratio)} ${unit.label}${liveRadius ? ' for live sources' : ''}.`,
+      );
+      return;
+    }
+    let next: SearchRequest = {
       ...search,
       origin: [
         lon.trim() ? parseInputDecimal(lon) : NaN,
@@ -179,6 +245,10 @@ export function SearchSheet({
       if (mode === 'search') {
         next.arrival = localHourToIso(arrival);
         next.departure = localHourToIso(departure);
+        if (Date.parse(next.departure) <= Date.now())
+          throw new Error('Departure is in the past. Choose a future departure to plan a stay.');
+      } else {
+        next = withDefaultStayDuration(next, stayHours);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Choose a valid stay window.');
@@ -186,10 +256,15 @@ export function SearchSheet({
     }
     const errors = validateSearch(next);
     if (errors.length) {
-      setError(errors.join('; '));
+      setError(readableFormErrors(errors));
       return;
     }
-    onSave(next);
+    onSave(
+      next,
+      selectedArea
+        ? { regionName: selectedArea.regionName, timezone: selectedArea.timezone }
+        : undefined,
+    );
     onClose();
   };
   return (
@@ -209,6 +284,36 @@ export function SearchSheet({
       {mode === 'search' ? (
         <View style={{ gap: 12 }}>
           <Eyebrow>Search area</Eyebrow>
+          <MapRegionPicker
+            units={units}
+            selectedId={selectedArea?.id}
+            onSelect={(preset) => {
+              setAreaConfirmed(true);
+              setError('');
+              setLat(String(preset.center[1]));
+              setLon(String(preset.center[0]));
+              numericReference.current.maxDistanceNm = preset.radiusNm;
+              setValues((previous) => ({
+                ...previous,
+                maxDistanceNm: formatted(
+                  preset.radiusNm * numericUnit('maxDistanceNm', units).ratio,
+                ),
+              }));
+              setSelectedArea({
+                id: preset.id,
+                regionName: preset.name,
+                timezone: preset.timezone,
+              });
+              setLocationResults([]);
+              setLocationQuery('');
+              setLocationError('');
+              locationRequest.current++;
+              setFindingLocation(false);
+            }}
+          />
+          {selectedArea ? (
+            <Text style={s.help}>Selected area · {selectedArea.regionName}</Text>
+          ) : null}
           {onFindLocation ? (
             <View style={{ gap: 10 }}>
               <Field
@@ -268,7 +373,7 @@ export function SearchSheet({
             </View>
           ) : null}
 
-          {pack ? (
+          {pack && areaConfirmed && position ? (
             <>
               <Text style={s.help}>Tap the map to set the centre. Adjust the radius below.</Text>
               <View
@@ -281,6 +386,7 @@ export function SearchSheet({
                 }}
               >
                 <Chart
+                  units={units}
                   pack={pack}
                   assessments={emptyAssessments}
                   origin={position}
@@ -304,13 +410,41 @@ export function SearchSheet({
           >
             <Icon name={coordinatesOpen ? 'chevron-up' : 'chevron-down'} size={16} />
             <Text style={{ color: c.ink, fontSize: 13 }}>
-              Coordinates · {position[1].toFixed(4)}, {position[0].toFixed(4)}
+              {areaConfirmed && position
+                ? `Coordinates · ${position[1].toFixed(4)}, ${position[0].toFixed(4)}`
+                : areaConfirmed
+                  ? 'Complete valid coordinates'
+                  : 'Enter coordinates'}
             </Text>
           </Pressable>
           {coordinatesOpen ? (
             <View style={{ flexDirection: 'row', gap: 12 }}>
-              <Field signed label="Latitude" value={lat} onChange={setLat} />
-              <Field signed label="Longitude" value={lon} onChange={setLon} />
+              <Field
+                signed
+                label="Latitude"
+                required
+                help="Decimal degrees, −85 to 85; south is negative."
+                value={lat}
+                onChange={(value) => {
+                  setLat(value);
+                  setAreaConfirmed(true);
+                  setError('');
+                  setSelectedArea(undefined);
+                }}
+              />
+              <Field
+                signed
+                label="Longitude"
+                required
+                help="Decimal degrees, −180 to 180; west is negative."
+                value={lon}
+                onChange={(value) => {
+                  setLon(value);
+                  setAreaConfirmed(true);
+                  setError('');
+                  setSelectedArea(undefined);
+                }}
+              />
             </View>
           ) : null}
         </View>
@@ -319,7 +453,9 @@ export function SearchSheet({
         {field(
           'maxDistanceNm',
           'Search radius',
-          'Straight-line distance from the selected centre. Live places/weather searches support up to 25 nm; reviewed or downloaded-data searches support up to 50 nm when coverage is available.',
+          liveRadius
+            ? 'Straight-line distance from the selected centre. Live sources support 0.25–25 nm (about 0.46–46.3 km). Downloaded or reviewed searches can cover larger areas when evidence is available.'
+            : 'Straight-line distance from the selected centre. This search uses downloaded or reviewed evidence and supports up to 50 nm where coverage exists.',
         )}
         {mode === 'search' ? (
           <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -342,9 +478,48 @@ export function SearchSheet({
             <Eyebrow>Stay window</Eyebrow>
             <Text style={s.help}>Your local time · {timezoneLabel()}</Text>
           </View>
-          <LocalDateHourField label="Arrival" value={arrival} onChange={setArrival} />
-          <LocalDateHourField label="Departure" value={departure} onChange={setDeparture} />
+          <LocalDateHourField
+            label="Arrival"
+            value={arrival}
+            onChange={(next) => {
+              setDeparture(moveStayArrival(arrival, departure, next));
+              setArrival(next);
+              setError('');
+            }}
+          />
+          <LocalDateHourField
+            label="Departure"
+            value={departure}
+            onChange={(next) => {
+              setDeparture(next);
+              setError('');
+            }}
+          />
+          <Text style={s.help}>
+            Changing arrival moves departure too. Review both dates after changing them, especially
+            across a clock change. Stays may be up to seven days.
+          </Text>
         </View>
+      ) : null}
+      {mode === 'defaults' ? (
+        <Field
+          label="Default stay duration"
+          numeric
+          required
+          suffix="hours"
+          value={stayHours}
+          onChange={(value) => {
+            setStayHours(value);
+            setError('');
+          }}
+          help="1–168 hours. Each new search starts at the next local hour and uses this duration; you can adjust its dates."
+        />
+      ) : null}
+      {visitMode === 'daytime' ? (
+        <Text style={s.help}>
+          Day stop does not override the dates: stays over 12 hours or crossing midnight at the
+          destination still require overnight permission.
+        </Text>
       ) : null}
       {field(
         'departureContingencyHours',
@@ -381,7 +556,8 @@ export function SearchSheet({
         <Button
           small
           secondary
-          onPress={() =>
+          onPress={() => {
+            Object.assign(numericReference.current, startingLimits);
             setValues((p) => ({
               ...p,
               ...Object.fromEntries(
@@ -390,8 +566,9 @@ export function SearchSheet({
                   formatted(value * numericUnit(key as NumericKey, units).ratio),
                 ]),
               ),
-            }))
-          }
+            }));
+            setError('');
+          }}
         >
           Use starting defaults
         </Button>
@@ -407,7 +584,7 @@ export function SearchSheet({
           {field(
             'maxWaveM',
             'Wave height',
-            'Maximum forecast waves or swell. Period and exposure also matter.',
+            'Maximum significant wave height or swell. Individual waves may be higher; period and exposure also matter.',
           )}
           {field(
             'maxCurrentKnots',
@@ -441,6 +618,13 @@ const anchorOptions = [
   },
   { value: 'claw', label: 'Claw', description: 'Three-claw design' },
   { value: 'fluke', label: 'Fluke', description: 'Pivoting flat-fluke design' },
+  {
+    value: 'fisherman',
+    label: 'Fisherman / Admiralty',
+    description: 'Stocked anchor with two arms',
+  },
+  { value: 'grapnel', label: 'Grapnel', description: 'Multiple fixed or folding prongs' },
+  { value: 'mushroom', label: 'Mushroom', description: 'Rounded mushroom-shaped design' },
   {
     value: 'other',
     label: 'Other / unknown',
@@ -481,7 +665,9 @@ export function ProfileSheet({
     Object.fromEntries(
       Object.entries(originalValues).map(([key, value]) => [
         key,
-        value === undefined ? '' : formatted(value * ratioFor(key)),
+        value === undefined || (value === 0 && vessel.id === 'unconfigured-vessel')
+          ? ''
+          : formatted(value * ratioFor(key)),
       ]),
     ),
   );
@@ -492,8 +678,12 @@ export function ProfileSheet({
       suffix={key === 'displacementKg' ? (units === 'imperial' ? 'lb' : 'kg') : lengthUnit}
       value={dimensions[key]}
       numeric
+      required={key !== 'airDraftM'}
       help={help}
-      onChange={(x) => setDimensions((p) => ({ ...p, [key]: x }))}
+      onChange={(x) => {
+        setDimensions((p) => ({ ...p, [key]: x }));
+        setError('');
+      }}
     />
   );
   const parsed = (key: string) => {
@@ -503,40 +693,47 @@ export function ProfileSheet({
     return parseInputDecimal(dimensions[key]) / ratioFor(key);
   };
   const save = () => {
-    const changedEquipment =
-      v.anchor.type !== vessel.anchor.type || v.anchor.rodeType !== vessel.anchor.rodeType;
-    const next: VesselProfile = {
-      ...v,
-      lengthM: parsed('lengthM'),
-      beamM: parsed('beamM'),
-      loadedDraftM: parsed('loadedDraftM'),
-      displacementKg: parsed('displacementKg'),
-      airDraftM: dimensions.airDraftM.trim() === '' ? undefined : parsed('airDraftM'),
-      anchor: {
-        ...v.anchor,
-        usableLengthM: parsed('usableLengthM'),
-        bowRollerHeightM: parsed('bowRollerHeightM'),
-        scopeGuidance: changedEquipment ? null : vessel.anchor.scopeGuidance,
-      },
-    };
+    const next = profileDraft();
+    if (equipmentChanged(vessel, next)) next.anchor.scopeGuidance = null;
     const errors = validateVessel(next);
     if (errors.length) {
-      setError(errors.join('; '));
+      setError(readableFormErrors(errors));
       return;
     }
     onSave(next);
     onClose();
   };
+  const profileDraft = (): VesselProfile => ({
+    ...v,
+    id: v.id === 'unconfigured-vessel' ? 'local-vessel' : v.id,
+    name: v.name.trim(),
+    lengthM: parsed('lengthM'),
+    beamM: parsed('beamM'),
+    loadedDraftM: parsed('loadedDraftM'),
+    displacementKg: parsed('displacementKg'),
+    airDraftM: dimensions.airDraftM.trim() === '' ? undefined : parsed('airDraftM'),
+    anchor: {
+      ...v.anchor,
+      usableLengthM: parsed('usableLengthM'),
+      bowRollerHeightM: parsed('bowRollerHeightM'),
+      scopeGuidance: vessel.anchor.scopeGuidance,
+    },
+  });
   const knownType = anchorOptions.some((option) => option.value === v.anchor.type);
   return (
     <Sheet title={title} onClose={onClose}>
       <Field
         label="Vessel name"
+        required
         value={v.name}
-        onChange={(name) => setV((p) => ({ ...p, name }))}
+        onChange={(name) => {
+          setV((p) => ({ ...p, name }));
+          setError('');
+        }}
       />
       <SelectField
         label="Vessel type"
+        help="For a sailing or powered multihull, choose Catamaran or Trimaran so beam and tariff checks use its hull type."
         value={v.type}
         options={[
           { value: 'sailboat', label: 'Sailboat' },
@@ -561,7 +758,8 @@ export function ProfileSheet({
       )}
       <Eyebrow>Anchoring equipment</Eyebrow>
       <SelectField
-        label="Anchor model / type"
+        label="Anchor design"
+        required
         value={v.anchor.type}
         options={
           knownType
@@ -570,8 +768,8 @@ export function ProfileSheet({
                 ...anchorOptions,
                 {
                   value: v.anchor.type,
-                  label: v.anchor.type,
-                  description: 'Previously saved model',
+                  label: v.anchor.type || 'Select your anchor design',
+                  description: v.anchor.type ? 'Previously saved design' : 'Required before saving',
                 },
               ]
         }
@@ -594,14 +792,16 @@ export function ProfileSheet({
         }
       />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-        {number('usableLengthM', 'Usable rode length')}
+        {number(
+          'usableLengthM',
+          'Usable rode length',
+          'Total deployable chain and rope, excluding any length that cannot be safely let out.',
+        )}
         {number('bowRollerHeightM', 'Bow roller above water')}
       </View>
       <Text style={s.help}>
-        {v.anchor.type !== vessel.anchor.type ||
-        v.anchor.rodeType !== vessel.anchor.rodeType ||
-        !vessel.anchor.scopeGuidance
-          ? 'Equipment changes require reviewed scope guidance before anchoring assessments can pass.'
+        {equipmentChanged(vessel, profileDraft()) || !vessel.anchor.scopeGuidance
+          ? 'Boat or equipment changes require reviewed scope guidance before anchoring assessments can pass. Choosing a design does not select a safe scope ratio.'
           : `Current scope guidance: ${vessel.anchor.scopeGuidance.ratio}:1 within its published operating limits. See result evidence for its source and review status.`}
       </Text>
       {error ? <Notice tone="warning">{error}</Notice> : null}

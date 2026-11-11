@@ -29,16 +29,18 @@ export default function WatchScreen({
   radius,
   units,
 }: {
-  position: Position;
-  radius: number;
+  position?: Position;
+  radius?: number;
   units: UnitSystem;
 }) {
   const { width } = useWindowDimensions();
   const [status, setStatus] = useState<Watch.WatchStatus | null>(null);
   const [error, setError] = useState('');
-  const [latitude, setLatitude] = useState(String(position[1]));
-  const [longitude, setLongitude] = useState(String(position[0]));
-  const [radiusDraft, setRadiusDraft] = useState(() => createLengthDraft(Math.ceil(radius), units));
+  const [latitude, setLatitude] = useState(position ? String(position[1]) : '');
+  const [longitude, setLongitude] = useState(position ? String(position[0]) : '');
+  const [radiusDraft, setRadiusDraft] = useState(() =>
+    createLengthDraft(radius === undefined ? undefined : Math.ceil(radius), units),
+  );
   const [newRadiusDraft, setNewRadiusDraft] = useState(() => createLengthDraft(undefined, units));
   const currentRadiusDraft = convertLengthDraft(radiusDraft, units);
   const currentNewRadiusDraft = convertLengthDraft(newRadiusDraft, units);
@@ -53,7 +55,6 @@ export default function WatchScreen({
   const [checklist, setChecklist] = useState(false);
   const [tested, setTested] = useState(false);
   const [heard, setHeard] = useState(false);
-  const [simulation, setSimulation] = useState(false);
   const [permissions, setPermissions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [verified, setVerified] = useState(false);
@@ -89,7 +90,6 @@ export default function WatchScreen({
       lastContact.current = elapsed();
       setClock(lastContact.current);
       setVerified(true);
-      setSimulation(next.simulation);
       setStatus(next);
       // Save transitions, not every heartbeat. Persisted UI history is never treated as live monitoring.
       const key = JSON.stringify([
@@ -143,7 +143,7 @@ export default function WatchScreen({
       app.remove();
       clearInterval(timer);
     };
-  }, [accept, simulation]);
+  }, [accept]);
 
   const run = async (action: () => Promise<unknown>) => {
     if (inFlight.current) return;
@@ -186,9 +186,7 @@ export default function WatchScreen({
     : armed && !statusIsCurrent
       ? 'Monitoring status unverified'
       : status.state === 'monitoring' && isLive
-        ? simulation
-          ? 'Simulation running'
-          : 'Watch is running'
+        ? 'Watch is running'
         : status.state === 'alarm'
           ? 'Check your position'
           : status.state === 'position_uncertain'
@@ -200,16 +198,6 @@ export default function WatchScreen({
                 : armed
                   ? 'Native service unverified'
                   : 'Watch not armed';
-  const simulateFix = (northM: number, accuracyM = 3) =>
-    run(async () => {
-      if (!status?.anchor) return;
-      Watch.injectSimulationFix({
-        latitude: status.anchor.latitude + northM / 111_195.0802335329,
-        longitude: status.anchor.longitude,
-        accuracyM,
-        timestamp: Date.now(),
-      });
-    });
   const shownRadius = status?.radiusM ?? enteredRadiusM;
   const lastFix = status?.lastFix;
   const fixAge = lastFix ? Date.now() - lastFix.timestamp : Infinity;
@@ -248,6 +236,42 @@ export default function WatchScreen({
     status?.state === 'interrupted' ||
     (armed && !statusIsCurrent);
 
+  if (status && !status.nativeAvailable)
+    return (
+      <ScrollView
+        contentContainerStyle={{
+          padding: width < 700 ? 16 : 24,
+          gap: 20,
+          maxWidth: 900,
+          width: '100%',
+          alignSelf: 'center',
+        }}
+      >
+        <Text accessibilityRole="header" style={{ fontSize: 26, fontWeight: '600', color: c.ink }}>
+          Anchor watch
+        </Text>
+        <Card>
+          <Icon name="smartphone" size={28} color={c.blue} />
+          <Text
+            accessibilityRole="header"
+            style={{ fontSize: 20, fontWeight: '600', color: c.ink }}
+          >
+            Native watch unavailable
+          </Text>
+          <Text style={{ fontSize: 14, lineHeight: 22, color: c.muted }}>
+            Background anchor monitoring requires the installed iOS or Android app with the native
+            watch module. This browser or app build cannot monitor your boat or sound a native watch
+            alarm.
+          </Text>
+          <Notice>
+            No anchor watch is running here. Use a supported native build and complete its position
+            confirmation, permissions and audible alarm test before arming.
+          </Notice>
+        </Card>
+        {error ? <Notice tone="warning">{error}</Notice> : null}
+      </ScrollView>
+    );
+
   return (
     <ScrollView
       automaticallyAdjustKeyboardInsets
@@ -269,11 +293,6 @@ export default function WatchScreen({
         Monitor distance from the confirmed anchor position. The anchor position and alarm radius
         never change automatically.
       </Text>
-      {simulation ? (
-        <Notice tone="warning">
-          Simulator active. Artificial positions only; no boat monitoring or audible native alarm.
-        </Notice>
-      ) : null}
       <Card>
         <View
           style={{
@@ -284,13 +303,7 @@ export default function WatchScreen({
           }}
         >
           <View style={{ gap: 7, flex: 1 }}>
-            <Eyebrow>
-              {simulation
-                ? 'WATCH SIMULATOR'
-                : status?.nativeAvailable
-                  ? 'ON-DEVICE WATCH'
-                  : 'WATCH STATUS'}
-            </Eyebrow>
+            <Eyebrow>{status?.nativeAvailable ? 'ON-DEVICE WATCH' : 'WATCH STATUS'}</Eyebrow>
             <Text style={{ fontSize: 22, fontWeight: '600', color: attention ? c.red : c.ink }}>
               {title}
             </Text>
@@ -384,7 +397,7 @@ export default function WatchScreen({
           ))}
         </View>
         <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
-          {simulation ? 'Replay harness' : 'Native service'}:{' '}
+          Native service:{' '}
           {isLive
             ? 'running'
             : armed && !statusIsCurrent
@@ -416,29 +429,6 @@ export default function WatchScreen({
           </Button>
         ) : null}
       </Card>
-      {!status?.nativeAvailable && !simulation ? (
-        <Card>
-          <Eyebrow>DEVICE MONITORING UNAVAILABLE</Eyebrow>
-          <Text style={{ fontSize: 13, lineHeight: 21, color: c.muted }}>
-            The native iOS or Android app is required for background monitoring. Enable the
-            simulator to test the watch controls here.
-          </Text>
-          <Button
-            secondary
-            icon="play"
-            disabled={busy}
-            onPress={() =>
-              void run(async () => {
-                Watch.enableSimulation();
-                setSimulation(true);
-                resetConfirmations();
-              })
-            }
-          >
-            Enable watch simulator
-          </Button>
-        </Card>
-      ) : null}
       {!armed ? (
         <Card>
           <Eyebrow>1 · ANCHOR POSITION & RADIUS</Eyebrow>
@@ -466,16 +456,14 @@ export default function WatchScreen({
               }}
             />
           </View>
-          {!simulation ? (
-            <Button
-              secondary
-              icon="crosshair"
-              disabled={busy || !status?.nativeAvailable}
-              onPress={capture}
-            >
-              Capture position at anchor drop
-            </Button>
-          ) : null}
+          <Button
+            secondary
+            icon="crosshair"
+            disabled={busy || !status?.nativeAvailable}
+            onPress={capture}
+          >
+            Capture position at anchor drop
+          </Button>
           <Field
             label="Alarm radius"
             value={radiusText}
@@ -502,12 +490,12 @@ export default function WatchScreen({
           <Button
             secondary
             icon="map-pin"
-            disabled={busy || (!status?.nativeAvailable && !simulation)}
+            disabled={busy || !status?.nativeAvailable}
             onPress={() =>
               void run(async () => {
                 const permission = await Watch.requestPermissions();
-                setPermissions(simulation || permission.canArm);
-                if (!simulation && !permission.canArm)
+                setPermissions(permission.canArm);
+                if (!permission.canArm)
                   throw new Error(
                     permission.message ??
                       'Precise location and audible notification permissions are required.',
@@ -515,13 +503,9 @@ export default function WatchScreen({
               })
             }
           >
-            {simulation
-              ? 'Check simulator readiness'
-              : permissions
-                ? 'Recheck permissions'
-                : 'Allow location and alerts'}
+            {permissions ? 'Recheck permissions' : 'Allow location and alerts'}
           </Button>
-          {!simulation && status?.nativeAvailable ? (
+          {status?.nativeAvailable ? (
             <Button
               secondary
               small
@@ -544,15 +528,11 @@ export default function WatchScreen({
               })
             }
           >
-            {simulation ? 'Run simulated alarm test' : 'Test alarm'}
+            Test alarm
           </Button>
           {tested ? (
             <Check
-              label={
-                simulation
-                  ? 'I understand this is a silent simulation, not a real alarm.'
-                  : 'I heard the test alarm on this device with my current sound settings.'
-              }
+              label="I heard the test alarm on this device with my current sound settings."
               checked={heard}
               onChange={setHeard}
             />
@@ -561,7 +541,16 @@ export default function WatchScreen({
           <Eyebrow>3 · START WATCH</Eyebrow>
           <Button
             icon="radio"
-            disabled={busy || !anchorConfirmed || !checklist || !tested || !heard || !permissions}
+            disabled={
+              busy ||
+              !status?.nativeAvailable ||
+              !statusIsCurrent ||
+              !anchorConfirmed ||
+              !checklist ||
+              !tested ||
+              !heard ||
+              !permissions
+            }
             onPress={() =>
               void run(async () => {
                 const anchor = {
@@ -590,17 +579,10 @@ export default function WatchScreen({
                   checklistConfirmed: true,
                   testAlarmConfirmed: true,
                 });
-                if (simulation)
-                  Watch.injectSimulationFix({
-                    latitude: anchor.latitude,
-                    longitude: anchor.longitude,
-                    accuracyM: 3,
-                    timestamp: Date.now(),
-                  });
               })
             }
           >
-            {simulation ? 'Start simulated watch' : 'Arm anchor watch'}
+            Arm anchor watch
           </Button>
         </Card>
       ) : (
@@ -645,35 +627,6 @@ export default function WatchScreen({
           >
             Apply confirmed radius
           </Button>
-          {simulation ? (
-            <View style={{ gap: 12 }}>
-              <Button
-                secondary
-                icon="navigation"
-                disabled={busy}
-                onPress={() => void simulateFix((status?.radiusM ?? 100) + 30)}
-              >
-                Simulate drift beyond boundary
-              </Button>
-              <Button secondary disabled={busy} onPress={() => void simulateFix(0)}>
-                Simulate return inside
-              </Button>
-              <Button secondary disabled={busy} onPress={() => void simulateFix(0, 100)}>
-                Simulate poor accuracy
-              </Button>
-              <Button
-                secondary
-                disabled={busy}
-                onPress={() =>
-                  void run(async () => {
-                    Watch.interruptSimulation();
-                  })
-                }
-              >
-                Simulate interrupted service
-              </Button>
-            </View>
-          ) : null}
           <Button secondary icon="square" disabled={busy} onPress={() => void run(Watch.stop)}>
             Stop watch
           </Button>

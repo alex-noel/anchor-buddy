@@ -41,7 +41,7 @@ const steps: { title: string; body: string; icon: IconName; items: string[] }[] 
   },
   {
     title: 'Monitor your stay',
-    body: 'At the boat, record the actual anchor position, confirm an alarm radius and test the alarm before arming the watch.',
+    body: 'In the installed iOS or Android app, record the actual anchor position, confirm an alarm radius and test the alarm before arming the watch. The browser cannot run a watch.',
     icon: 'bell',
     items: [
       'The anchor position never moves automatically.',

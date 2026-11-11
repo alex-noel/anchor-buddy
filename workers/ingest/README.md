@@ -1,16 +1,14 @@
 # Regional source ingestion
 
-This worker builds integrity-checked source packs. It does **not** claim that downloading an ENC supplies complete habitat, regulatory, tide/current, holding-ground or marina data. No real navigable Florida Keys pack is bundled. The fixture is invented and is permanently labeled synthetic.
+This worker builds integrity-checked real-source packs. It does **not** claim that downloading an ENC supplies complete habitat, regulatory, tide/current, holding-ground or marina data. No navigable Florida Keys pack is bundled. Build, verification, indexing and publication reject synthetic or mixed-source data. Invented test fixtures live only under `tests/fixtures` and cannot be built by the production CLI.
 
-Python 3.11+ runs the fixture pipeline and tests without packages. Real ENC extraction and real-source geometry validation require GDAL with S-57 support. `tippecanoe` is optional for display MBTiles. PostGIS indexing requires the `postgres` optional dependency (`pip install '.[postgres]'`); the container supplies GDAL and psycopg.
+Python 3.11+ runs unit tests without packages; those tests replace only the external GDAL validator. Production ENC extraction and source geometry validation require GDAL with S-57 support. `tippecanoe` is optional for display MBTiles. PostGIS indexing requires the `postgres` optional dependency (`pip install '.[postgres]'`); the container supplies GDAL and psycopg and excludes test fixtures.
 
 From `workers/ingest`:
 
 ```sh
 python3 -m unittest discover -s tests -v
 python3 -m anchor_ingest --help
-python3 -m anchor_ingest build fixtures/recipe.json --root /tmp/anchorbuddy-packs
-python3 -m anchor_ingest verify /tmp/anchorbuddy-packs/florida-keys-fixture/test-v1
 python3 -m anchor_ingest catalog
 ```
 
@@ -21,7 +19,7 @@ python3 -m anchor_ingest download --cell CELL_FROM_CATALOG --output /tmp/anchorb
 python3 -m anchor_ingest extract /path/to/CELL.000 --output /tmp/cell.geojson
 ```
 
-Keep each cell's `.000`, `.001`, `.002`, … files together. Missing sequence members and GDAL warnings cause extraction to fail. GDAL applies updates; the result retains DSID/DSPM metadata, source edition, source datum code and the precise update sequence. A numeric S-57 vertical-datum code is **not** automatically treated as MLLW. The catalog snapshot and downloaded exchange-set hashes remain in provenance.
+Keep each cell's `.000`, `.001`, `.002`, … files together. Missing sequence members and GDAL warnings cause extraction to fail. GDAL applies updates; the result retains DSID/DSPM metadata, source edition, sounding datum (`DSPM_SDAT`), height datum (`DSPM_VDAT`), depth-unit code and the precise update sequence. These datum fields are distinct. A numeric S-57 datum code is **not** automatically treated as MLLW. Split soundings retain their original feature ID and a per-point ordinal so no points are lost to duplicate IDs. The catalog snapshot and downloaded exchange-set hashes remain in provenance. Some NOAA catalog records supply geographic polygons rather than bounding-box fields; an empty catalog `bounds` is unknown and requires inspecting the source metadata, not assuming worldwide coverage.
 
 Official sanctuary, habitat, jurisdiction and spatial safety-notice GeoJSON can be imported with:
 
@@ -36,16 +34,36 @@ This preserves geometry and records time/jurisdiction/source; it leaves legal ap
 
 ## Pack recipe and artifacts
 
-Copy the fixture recipe into an operator workspace and replace its invented sources. `featureFiles` points to extracted/imported GeoJSON. Supply `regionId`, an immutable `version`, `bounds`, `validUntil` and complete `provenance`. Features must reference an included source ID. Optional attachments are `{name, file, purpose}` where purpose is `forecast`, `restrictions`, `tariffs` or `assessment`. An assessment attachment must conform to the exported domain `RegionPack` type. Curated records must keep operator source currency, verification date, validity period and unknown fields. Tariff absence is not “free.”
+Create a recipe in an operator workspace. `featureFiles` points to extracted/imported real GeoJSON. Supply `regionId`, an immutable `version`, `bounds`, `validUntil`, `synthetic:false` and complete `provenance`. Every source must explicitly declare `synthetic:false` alongside its ID, URL, retrieval timestamp and attribution. Features must reference an included source ID. Optional attachments are `{name, file, purpose}` where purpose is `forecast`, `restrictions`, `tariffs` or `assessment`. An assessment attachment must conform to the exported domain `RegionPack` type with real-source review status and explicitly real sources. Verification also checks JSON attachments and SQLite metadata for synthetic or unclassified provenance. Curated records must keep operator source currency, verification date, validity period and unknown fields. Tariff absence is not “free.”
+
+```sh
+python3 -m anchor_ingest build /path/to/operator/recipe.json --root /tmp/anchorbuddy-packs
+python3 -m anchor_ingest verify /tmp/anchorbuddy-packs/REGION/VERSION
+```
 
 The resulting version directory contains:
 
-- `analysis.sqlite`: full unsimplified geometry/properties, source references, conservative depth bounds, original vertical datum, unreviewed survey quality, and an RTree. Sounding points remain points; they are never interpolated into depth coverage.
+- `analysis.sqlite`: full unsimplified geometry/properties, source references, original datum/unit codes, unreviewed survey quality, and an RTree. Convenience metre columns are populated only when the source explicitly declares metres; raw `DRVAL1`/`DRVAL2` always remain in properties. Sounding points remain points; they are never interpolated into depth coverage.
 - `display.geojson`, optionally `display.mbtiles`: presentation artifacts. Tippecanoe may simplify or drop display geometry, so analysis never reads it.
 - Source-specific forecast, restriction, tariff and assembled assessment attachments supplied by the operator.
 - `manifest.json`: asset lengths and SHA-256 digests, source provenance, feature counts, expiry, release status and review gates.
 
 An assembled assessment is a separate reviewed product, not an automatic inference from ENC object count. Its coverage layers must positively establish full bathymetry/hazard/habitat/restriction/weather/tide/current coverage for the searched footprint and stay. It must retain unknown depths, survey quality, current/wave gaps, vertical-datum mismatch, unresolved rules and source expiry. A real assessment snapshot with `validation.status !== "reviewed"` cannot be served for live search.
+
+## Assemble extracted ENC evidence
+
+The `assemble` command converts a verified source pack's SQLite geometry into domain `RegionPack` JSON. It emits an **unreviewed** assessment plus an omission report in a new directory; it never modifies a published pack or grants release approval.
+
+```sh
+python3 -m anchor_ingest assemble /tmp/anchorbuddy-packs/REGION/VERSION \
+  --config /path/to/operator/assembly-config.json --output /tmp/assembled-new-version
+```
+
+The configuration requires `name`, an IANA `timezone`, and `sourceMappings` keyed by each source ID. Every source needs an explicit `license` statement (either here or in its provenance). A mapping without datum fields still imports polygon hazards and navigation marks, and records why depth areas were omitted. To include depth areas, provide all of `verticalDatum`, `depthUnits` (`metres`, `feet`, or `fathoms`), `sourceSoundingDatumCode`, `sourceDepthUnitCode`, `reviewedBy`, and timezone-qualified `reviewedAt`. These are operator attestations of a source-specific mapping; do not copy numbers from an unrelated cell. The original feature codes must match exactly. Local `M_SDAT` or `M_UNIT` areas block cell-wide depth mapping until a separate spatial resolution step is reviewed.
+
+`assessment.json` preserves polygon holes and source depth ranges, converts only explicitly mapped units, and leaves unknown bounds unknown. Survey quality remains `unknown`. It includes polygon shore/obstruction/cable/channel features and supported point navigation marks. `assembly-report.json` records imported counts, every omission, source metadata such as `M_QUAL`, and the supplied mapping reviews. Isolated soundings and point/line hazards remain in the source SQLite; the assembler neither interpolates continuous depth nor invents hazard buffers. It does not infer holding ground from vegetation, habitat permission from absent polygons, or complete coverage from chart boundaries.
+
+The assembly does not attach live point forecasts to chart polygons or select the nearest tide station. Weather/current coverage and station-to-site datum relationships need explicit spatial validation. An operator can subsequently add reviewed evidence and include the assembled JSON as an `assessment` attachment in a **new** source-pack version. The existing maritime, coverage, geometry, station-mapping and on-water release gates still apply.
 
 Every weather and tide interval must identify its actual reviewed polygons in `coverageAreaIds`. Weather intervals link both applicable weather and current areas; tide intervals link the validated station's tide areas. A point forecast or nearby tide station cannot establish conditions across the whole region by merely being included in a pack.
 
@@ -68,13 +86,13 @@ The assessment's `chart.styleUrl` must match and `chart.offlineAllowed` must be 
 
 After installation, native Settings can use MapLibre `OfflineManager` to download the full pack bounds at the approved zoom levels (maximum 16) into its native tile database. It reports completion only after the native manager confirms it. Partial downloads can resume, and they do not replace analysis data. The web preview does not download offline chart tiles. Downloaded JSON remains the assessment input; SQLite and rendering tiles remain distinct artifacts.
 
-Every real pack remains `review-required` until the operator supplies true `maritime`, `coverage`, `geometry`, `stationMappings` and `onWaterValidation` review gates plus `reviewedBy` and `reviewedAt`. The recipe is an operator assertion of external work; the software cannot perform professional review or on-water trials. Synthetic packs cannot be marked reviewed. Approved release also requires an assessment attachment.
+Every real pack remains `review-required` until the operator supplies true `maritime`, `coverage`, `geometry`, `stationMappings` and `onWaterValidation` review gates plus `reviewedBy` and `reviewedAt`. The recipe is an operator assertion of external work; the software cannot perform professional review or on-water trials. Approved release also requires an assessment attachment.
 
 Files are built in a staging directory and verified before publication. A version cannot be overwritten. The `current.json` pointer changes only after the completed version is atomically renamed and flushed; an interrupted build leaves the previous pointer intact. Mobile clients must likewise verify a complete download before replacing their active snapshot.
 
 ```sh
-python3 -m anchor_ingest index-postgis /tmp/anchorbuddy-packs/florida-keys-fixture/test-v1
-python3 -m anchor_ingest publish /tmp/anchorbuddy-packs/florida-keys-fixture/test-v1 --destination s3://operator-bucket/packs
+python3 -m anchor_ingest index-postgis /tmp/anchorbuddy-packs/REGION/VERSION
+python3 -m anchor_ingest publish /tmp/anchorbuddy-packs/REGION/VERSION --destination s3://operator-bucket/packs
 ```
 
 Set `DATABASE_URL` for indexing without including secrets in commands. PostGIS indexing is transactional and version-scoped. S3 publication uses the operator's configured AWS-compatible CLI and uploads the current pointer last. Configure a bucket policy that forbids overwriting versioned objects, and object retention/versioning appropriate to your deployment. Publication is an operator action; these commands do not run automatically. The API serves a local/read-only mounted pack volume; object-storage deployments can serve the same manifest/assets directly over HTTPS.
