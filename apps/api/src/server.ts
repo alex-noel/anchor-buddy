@@ -11,7 +11,11 @@ import {
   type RegionPack,
 } from '@anchor-buddy/domain';
 import { FilePackStore, PackError, assertRealAssessment, type PackStore } from './packs.js';
-import { PROVIDERS } from './providers/contracts.js';
+import {
+  capabilityDeploymentFromEnvironment,
+  parseProviderCapabilityArea,
+  resolveProviderCapabilities,
+} from './providers/capabilities.js';
 import { GovernmentHttp, ProviderError } from './providers/http.js';
 import { NwsProvider } from './providers/nws.js';
 import { CoopsProvider, type StationMapping } from './providers/coops.js';
@@ -88,6 +92,7 @@ export function createApp(options: AppOptions = {}) {
     logController: new LogController({ disableRequestLogging: true }),
   });
   const store = options.packStore ?? new FilePackStore(process.env.PACK_ROOT ?? './data/packs');
+  const capabilityDeployment = capabilityDeploymentFromEnvironment(process.env);
   const now = options.now ?? (() => new Date());
   const userAgent = process.env.NWS_USER_AGENT ?? PROJECT_USER_AGENT;
   const weather =
@@ -214,7 +219,12 @@ export function createApp(options: AppOptions = {}) {
     nauticalRelease: 'review-required',
     liveDiscovery: DISCOVERY_CAPABILITIES,
   }));
-  app.get('/v1/providers', async () => ({ providers: PROVIDERS }));
+  app.get('/v1/providers', async (request, reply) => {
+    const selection = parseProviderCapabilityArea(request.query);
+    if (selection.status === 'invalid')
+      return reply.code(400).send({ error: 'INVALID_PROVIDER_AREA' });
+    return resolveProviderCapabilities(capabilityDeployment, selection.area);
+  });
   app.get('/v1/regions', async () => ({
     discovery: DISCOVERY_CAPABILITIES,
     regions: (await store.regions()).filter((region) => region.synthetic === false),

@@ -238,7 +238,7 @@ export interface RegionPack {
   /** Absent is legacy v1; unsupported major versions are rejected. */
   schemaVersion?: 1 | 2;
   snapshot?: SnapshotIdentity;
-  /** Exchange-only until SAFE-01 integration; assessment validation rejects nonempty arrays. */
+  /** Validated source primitives; known intersections exclude, clearance requires model review. */
   hazardPrimitives?: HazardPrimitive[];
   id: string;
   version: string;
