@@ -1,3 +1,8 @@
+import {
+  checkSchemaVersion,
+  validateEvidenceEnvelope,
+  validateHazardPrimitive,
+} from './contracts.ts';
 import { BEDDINGS, type RegionPack, type SearchRequest, type VesselProfile } from './types.ts';
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -290,7 +295,7 @@ function ringsValid(rings: Point[][]): boolean {
   }
   return true;
 }
-function validGeometry(value: unknown): boolean {
+export function validGeometry(value: unknown): boolean {
   if (
     !record(value) ||
     !['Polygon', 'MultiPolygon'].includes(String(value.type)) ||
@@ -340,6 +345,23 @@ export function validateLiveRegionPack(value: unknown): string[] {
 export function validateRegionPack(value: unknown): string[] {
   if (!record(value)) return ['Region pack must be an object.'];
   const errors: string[] = [];
+  const schema = checkSchemaVersion(value, true);
+  if (schema.status !== 'supported') return schema.errors;
+  if (value.hazardPrimitives !== undefined) {
+    if (!Array.isArray(value.hazardPrimitives)) errors.push('Hazard primitives must be an array.');
+    else {
+      for (const primitive of value.hazardPrimitives)
+        errors.push(...validateHazardPrimitive(primitive, validGeometry));
+      if (value.hazardPrimitives.length)
+        errors.push(
+          'UNSUPPORTED_HAZARD_PRIMITIVES: this assessment engine cannot activate primitive hazards until SAFE-01 integration.',
+        );
+    }
+  }
+  if (value.schemaVersion === 2 || value.snapshot !== undefined)
+    errors.push(
+      'UNSUPPORTED_V2_ACTIVATION: verify component bytes and review scope with the v2 composer before a reviewed activation adapter is implemented.',
+    );
   for (const key of ['id', 'version', 'name', 'timezone'])
     if (typeof value[key] !== 'string' || !value[key]) errors.push(`Region ${key} is required.`);
   try {
@@ -419,6 +441,12 @@ export function validateRegionPack(value: unknown): string[] {
   }
   if (Array.isArray(value.sources))
     for (const source of value.sources) {
+      if (record(source) && source.evidence !== undefined) {
+        errors.push(...validateEvidenceEnvelope(source.evidence));
+        errors.push(
+          'UNSUPPORTED_V2_EVIDENCE_ACTIVATION: the legacy engine cannot ignore classified evidence; use the reviewed v2 activation adapter when available.',
+        );
+      }
       if (
         !record(source) ||
         typeof source.id !== 'string' ||
