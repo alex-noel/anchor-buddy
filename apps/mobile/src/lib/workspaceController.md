@@ -13,7 +13,7 @@
 | Any | `closeSearch` | Clear active search, preview, pin, details, plan, watch suggestion and draft; no native watch command. |
 | Active results or plan | `openDetails(selection, search)` | Open details for candidate and allowance, with optional plan search. Assessment is recomputed from current data. |
 | Details | `closeDetails` | Close details; outside details a no-op. |
-| Details | `openPlan(plan)` | Close details and enter plan with candidate, search and allowance. |
+| Details or an explicit plan supplied from active state | `openPlan(plan)` | Close details and enter plan with candidate, search and allowance. The caller supplies the current candidate/search tuple; the reducer does not manufacture an assessment or authorize anchoring. |
 | Any | `showWatch(setup?)` | Show watch route, optionally with an unconfirmed suggestion. Existing native session is independent. |
 | Any profile commit | `commitProfile` | Clear plan and watch suggestions; return from plan to base. Native status/session is unchanged. |
 | Any / saved map or region | `openPreview(area, name?, timezone?)` | Clear prior search and selection, set preview area and metadata, select Explore map. Caller cancels outstanding discovery first. |

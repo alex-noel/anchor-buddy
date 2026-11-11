@@ -93,23 +93,60 @@ const monotonicNow = () => globalThis.performance?.now() ?? Date.now();
 const activeWatchStates = new Set(['arming', 'monitoring', 'alarm', 'position_uncertain']);
 function AnchorApp() {
   const controller = useWorkspaceController();
-  const { state: workspace, set: setWorkspace, modal: setModal, dispatch, dataRequest, generation, mounted, cancelDataRequest } = controller;
-  const { activeSearch, activeAreaName, activeAreaTimezone, searchDraft, searchDraftArea, tab, flow, previewArea, mapPreview, view, filters, selectedId, detail, detailSearch, customPin, choosingPin, plan, watchSetup } = workspace;
+  const {
+    state: workspace,
+    set: setWorkspace,
+    modal: setModal,
+    dispatch,
+    dataRequest,
+    generation,
+    mounted,
+    cancelDataRequest,
+  } = controller;
+  const {
+    activeSearch,
+    activeAreaName,
+    activeAreaTimezone,
+    searchDraft,
+    searchDraftArea,
+    tab,
+    flow,
+    previewArea,
+    mapPreview,
+    view,
+    filters,
+    selectedId,
+    detail,
+    detailSearch,
+    customPin,
+    choosingPin,
+    plan,
+    watchSetup,
+  } = workspace;
   const setActiveSearch = (v: typeof activeSearch) => setWorkspace('activeSearch', v);
   const setFilters = (v: typeof filters) => setWorkspace('filters', v);
   const setSelectedId = (v: typeof selectedId) => setWorkspace('selectedId', v);
   const closeDetails = () => dispatch({ type: 'closeDetails' });
   const setCustomPin = (v: typeof customPin) => setWorkspace('customPin', v);
   const setChoosingPin = (v: typeof choosingPin) => setWorkspace('choosingPin', v);
-  const isModal = (name: import('./lib/workspaceController').ModalName) => workspace.modal?.name === name;
-  const dataOpen = isModal('data'); const setDataOpen = (v: boolean) => setModal('data', v);
-  const profileOpen = isModal('profile'); const setProfileOpen = (v: boolean) => setModal('profile', v);
-  const defaultsOpen = isModal('defaults'); const setDefaultsOpen = (v: boolean) => setModal('defaults', v);
-  const advancedOpen = isModal('advanced'); const setAdvancedOpen = (v: boolean) => setModal('advanced', v);
-  const layersOpen = isModal('layers'); const setLayersOpen = (v: boolean) => setModal('layers', v);
-  const setupOpen = isModal('setup') || workspace.modal?.parent === 'setup'; const setSetupOpen = (v: boolean) => setModal('setup', v);
-  const tourOpen = isModal('tour'); const setTourOpen = (v: boolean) => setModal('tour', v);
-  const saveOpen = isModal('save'); const setSaveOpen = (v: boolean) => setModal('save', v);
+  const isModal = (name: import('./lib/workspaceController').ModalName) =>
+    workspace.modal?.name === name;
+  const dataOpen = isModal('data');
+  const setDataOpen = (v: boolean) => setModal('data', v);
+  const profileOpen = isModal('profile');
+  const setProfileOpen = (v: boolean) => setModal('profile', v);
+  const defaultsOpen = isModal('defaults');
+  const setDefaultsOpen = (v: boolean) => setModal('defaults', v);
+  const advancedOpen = isModal('advanced');
+  const setAdvancedOpen = (v: boolean) => setModal('advanced', v);
+  const layersOpen = isModal('layers');
+  const setLayersOpen = (v: boolean) => setModal('layers', v);
+  const setupOpen = isModal('setup') || workspace.modal?.parent === 'setup';
+  const setSetupOpen = (v: boolean) => setModal('setup', v);
+  const tourOpen = isModal('tour');
+  const setTourOpen = (v: boolean) => setModal('tour', v);
+  const saveOpen = isModal('save');
+  const setSaveOpen = (v: boolean) => setModal('save', v);
   const { width } = useWindowDimensions();
   const wide = width >= 960;
   const [pack, setPack] = useState(() => createEmptyRegion(UNSELECTED_ORIGIN, 3));
@@ -126,7 +163,10 @@ function AnchorApp() {
     resume?: MapArea;
     areaSelected?: boolean;
   } | null>(null);
-  const setDownloadSelection = (v: typeof downloadSelection) => { updateDownloadSelection(v); setModal('download', !!v); };
+  const setDownloadSelection = (v: typeof downloadSelection) => {
+    updateDownloadSelection(v);
+    setModal('download', !!v);
+  };
   const [vessel, setVessel] = useState<VesselProfile>(createVesselDraft);
   const [defaults, setDefaults] = useState<SearchRequest>(() =>
     createDefaultSearch(UNSELECTED_ORIGIN),
@@ -250,7 +290,14 @@ function AnchorApp() {
       live = false;
     };
   }, []);
-  const refreshMapAreas = () => void listMapAreas().then((areas) => { if (mounted.current) setMapAreas(areas); }).catch((error) => { if (mounted.current) notifyError(error); });
+  const refreshMapAreas = () =>
+    void listMapAreas()
+      .then((areas) => {
+        if (mounted.current) setMapAreas(areas);
+      })
+      .catch((error) => {
+        if (mounted.current) notifyError(error);
+      });
   useEffect(() => {
     refreshMapAreas();
     const unsubscribe = subscribeMapAreas(refreshMapAreas);
@@ -282,7 +329,8 @@ function AnchorApp() {
     void observer.refresh();
     const timer = setInterval(() => {
       setWatchClock(monotonicNow());
-      if (AppState.currentState === 'active' || AppState.currentState === null) void observer.refresh();
+      if (AppState.currentState === 'active' || AppState.currentState === null)
+        void observer.refresh();
     }, 5000);
     const listener = AppState.addEventListener('change', (state) => {
       observer.invalidate();
@@ -399,8 +447,21 @@ function AnchorApp() {
   };
   const openSearch = () => {
     if (!requireVessel()) return;
-    dispatch({ type: 'beginSearch', area: { confirmed: !!activeSearch || !!previewArea, name: activeAreaName, timezone: activeAreaTimezone }, draft:
-      activeSearch ? { ...activeSearch } : { ...freshSearch(defaults), ...(previewArea ? { origin: previewArea.center, maxDistanceNm: Math.min(25, previewArea.radiusNm) } : {}) }
+    dispatch({
+      type: 'beginSearch',
+      area: {
+        confirmed: !!activeSearch || !!previewArea,
+        name: activeAreaName,
+        timezone: activeAreaTimezone,
+      },
+      draft: activeSearch
+        ? { ...activeSearch }
+        : {
+            ...freshSearch(defaults),
+            ...(previewArea
+              ? { origin: previewArea.center, maxDistanceNm: Math.min(25, previewArea.radiusNm) }
+              : {}),
+          },
     });
   };
   const updateEvidenceCache = (update: (previous: RegionalData[]) => RegionalData[]) => {
@@ -496,7 +557,9 @@ function AnchorApp() {
           loaded,
           saveRegionalData,
           () => !controller.signal.aborted && generation.current.current(request),
-          (stored) => { if (!keepReviewed) setSavedAt(stored.savedAt ?? null); },
+          (stored) => {
+            if (!keepReviewed) setSavedAt(stored.savedAt ?? null);
+          },
         );
       } catch (error) {
         if (!controller.signal.aborted && generation.current.current(request))
@@ -535,7 +598,13 @@ function AnchorApp() {
     restore?: { filters?: ResultFilters; pin?: Position },
   ) => {
     if (!requireVessel()) return;
-    dispatch({ type: 'commitSearch', search, area: selection, filters: restore?.filters, pin: restore?.pin });
+    dispatch({
+      type: 'commitSearch',
+      search,
+      area: selection,
+      filters: restore?.filters,
+      pin: restore?.pin,
+    });
     setAssessedAt(new Date().toISOString());
     void loadSearchData(search, false, selection?.regionName, selection?.timezone);
   };
@@ -584,10 +653,18 @@ function AnchorApp() {
     setPack(data.pack);
     setRegionData(data);
     setSavedAt(data.savedAt ?? null);
-    dispatch({ type: 'openPreview', name: data.pack.name, timezone: data.pack.timezone, area: {
-      center: [(data.pack.bounds[0] + data.pack.bounds[2]) / 2, (data.pack.bounds[1] + data.pack.bounds[3]) / 2],
-      radiusNm: Math.min(50, (data.pack.bounds[3] - data.pack.bounds[1]) * 30),
-    } });
+    dispatch({
+      type: 'openPreview',
+      name: data.pack.name,
+      timezone: data.pack.timezone,
+      area: {
+        center: [
+          (data.pack.bounds[0] + data.pack.bounds[2]) / 2,
+          (data.pack.bounds[1] + data.pack.bounds[3]) / 2,
+        ],
+        radiusNm: Math.min(50, (data.pack.bounds[3] - data.pack.bounds[1]) * 30),
+      },
+    });
     setAssessedAt(new Date().toISOString());
   };
   const removeCachedRegion = (id: string) =>
@@ -651,7 +728,11 @@ function AnchorApp() {
     setRegionData(null);
   };
   const select = (assessment: Assessment) => {
-    dispatch({ type: 'openDetails', selection: { candidate: assessment.candidate, allowance: assessment.depthAllowancePercent }, search: null });
+    dispatch({
+      type: 'openDetails',
+      selection: { candidate: assessment.candidate, allowance: assessment.depthAllowancePercent },
+      search: null,
+    });
   };
   const dropPin = (position: Position) => {
     if (!activeSearch || !vesselReady) return;
@@ -732,7 +813,12 @@ function AnchorApp() {
     const prepared = prepareSavedSearch(snapshot.search);
     if (prepared.needsDateReview) {
       dispatch({ type: 'changeTab', tab: 'explore' });
-      dispatch({ type: 'beginSearch', draft: prepared.search, area: { confirmed: true, name: savedRegion?.name, timezone: savedRegion?.timezone }, restore: { filters: snapshot.filters, pin: snapshot.selectedPosition } });
+      dispatch({
+        type: 'beginSearch',
+        draft: prepared.search,
+        area: { confirmed: true, name: savedRegion?.name, timezone: savedRegion?.timezone },
+        restore: { filters: snapshot.filters, pin: snapshot.selectedPosition },
+      });
       setMessage('This saved stay has ended. Review the proposed new dates before searching.');
       return;
     }
@@ -868,14 +954,26 @@ function AnchorApp() {
             units={units}
             layers={layers}
             onDetails={(assessment, request) => {
-              dispatch({ type: 'openDetails', selection: { candidate: assessment.candidate, allowance: assessment.depthAllowancePercent }, search: request ?? plan.search });
+              dispatch({
+                type: 'openDetails',
+                selection: {
+                  candidate: assessment.candidate,
+                  allowance: assessment.depthAllowancePercent,
+                },
+                search: request ?? plan.search,
+              });
             }}
             onWatch={(position, radius) => {
               dispatch({ type: 'showWatch', setup: { position, radius } });
             }}
             nativeWatchAvailable={watchStatus?.nativeAvailable === true}
             onEditSearch={(request, position) => {
-              dispatch({ type: 'beginSearch', draft: { ...request }, area: { confirmed: true, name: activeAreaName, timezone: activeAreaTimezone }, restore: { pin: position } });
+              dispatch({
+                type: 'beginSearch',
+                draft: { ...request },
+                area: { confirmed: true, name: activeAreaName, timezone: activeAreaTimezone },
+                restore: { pin: position },
+              });
             }}
           />
         </View>
@@ -932,10 +1030,18 @@ function AnchorApp() {
             cancelDataRequest();
             setDataLoading(false);
             setDataError('');
-            dispatch({ type: 'openPreview', name: pack.name, timezone: pack.timezone, area: {
-              center: [(pack.bounds[0] + pack.bounds[2]) / 2, (pack.bounds[1] + pack.bounds[3]) / 2],
-              radiusNm: Math.min(50, (pack.bounds[3] - pack.bounds[1]) * 30),
-            } });
+            dispatch({
+              type: 'openPreview',
+              name: pack.name,
+              timezone: pack.timezone,
+              area: {
+                center: [
+                  (pack.bounds[0] + pack.bounds[2]) / 2,
+                  (pack.bounds[1] + pack.bounds[3]) / 2,
+                ],
+                radiusNm: Math.min(50, (pack.bounds[3] - pack.bounds[1]) * 30),
+              },
+            });
           }}
           onSettings={() => changeTab('settings')}
           onSearch={() => {
@@ -1553,12 +1659,15 @@ function AnchorApp() {
             setDataOpen(true);
           }}
           onPlan={() => {
-            dispatch({ type: 'openPlan', plan: {
-              instance: ++planSequence.current,
-              candidate: currentDetail.candidate,
-              allowance: currentDetail.depthAllowancePercent,
-              search: detailSearch ?? activeSearch!,
-            } });
+            dispatch({
+              type: 'openPlan',
+              plan: {
+                instance: ++planSequence.current,
+                candidate: currentDetail.candidate,
+                allowance: currentDetail.depthAllowancePercent,
+                search: detailSearch ?? activeSearch!,
+              },
+            });
           }}
         />
       ) : null}
