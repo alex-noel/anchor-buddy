@@ -1,4 +1,4 @@
-import { validateRegionPack, type RegionPack } from '@anchor-buddy/domain';
+import { validateLiveRegionPack, type RegionPack } from '@anchor-buddy/domain';
 
 export interface OfflineChartApproval {
   styleUrl: string;
@@ -67,6 +67,7 @@ export function validateManifest(
     m.assets.length > 100
   )
     throw new Error('Unsupported or incomplete pack manifest.');
+  if (m.synthetic !== false) throw new Error('Synthetic regional data cannot be installed.');
   if (
     expected &&
     (m.regionId !== expected.regionId ||
@@ -92,14 +93,13 @@ export function validateManifest(
   )
     throw new Error('Invalid regional bounds.');
   if (
-    !m.synthetic &&
-    (!m.review ||
-      m.releaseStatus !== 'reviewed' ||
-      !['maritime', 'coverage', 'geometry', 'stationMappings', 'onWaterValidation'].every(
-        (key) => m.review?.[key as keyof NonNullable<Manifest['review']>] === true,
-      ) ||
-      !m.review.reviewedBy?.trim() ||
-      !validDate(m.review.reviewedAt))
+    !m.review ||
+    m.releaseStatus !== 'reviewed' ||
+    !['maritime', 'coverage', 'geometry', 'stationMappings', 'onWaterValidation'].every(
+      (key) => m.review?.[key as keyof NonNullable<Manifest['review']>] === true,
+    ) ||
+    !m.review.reviewedBy?.trim() ||
+    !validDate(m.review.reviewedAt)
   )
     throw new Error('Regional data has not completed the release review.');
   let total = 0,
@@ -261,7 +261,7 @@ export async function installPack(
         throw new Error('Downloaded pack failed its integrity check.');
       if (asset.purpose === 'assessment') {
         const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
-        const errors = validateRegionPack(parsed);
+        const errors = validateLiveRegionPack(parsed);
         if (errors.length)
           throw new Error('Invalid regional analysis: ' + errors.slice(0, 3).join('; '));
         pack = parsed as RegionPack;
@@ -275,8 +275,8 @@ export async function installPack(
         if (Date.parse(pack.validUntil) > Date.parse(manifest.validUntil))
           throw new Error('Assessment expiry exceeds its manifest validity.');
         if (
-          !manifest.synthetic &&
-          (pack.validation.status !== 'reviewed' || pack.sources.some((source) => source.synthetic))
+          pack.validation.status !== 'reviewed' ||
+          pack.sources.some((source) => source.synthetic !== false)
         )
           throw new Error('Analysis has not been reviewed or contains synthetic evidence.');
         if (

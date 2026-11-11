@@ -26,6 +26,7 @@ export interface PackManifest {
     url: string;
     retrievedAt: string;
     attribution: string;
+    synthetic: false;
     [key: string]: unknown;
   }>;
   review: {
@@ -61,6 +62,19 @@ export class PackError extends Error {
   }
 }
 const SAFE_SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/;
+export function assertRealAssessment(value: RegionPack): void {
+  if (
+    !value ||
+    !['unreviewed', 'reviewed'].includes(value.validation?.status) ||
+    !Array.isArray(value.sources) ||
+    value.sources.some((source) => source.synthetic !== false)
+  )
+    throw new PackError(
+      'SYNTHETIC_DATA_REJECTED',
+      'Only real-source regional data is supported',
+      503,
+    );
+}
 function segment(value: string) {
   if (!SAFE_SEGMENT.test(value) || value.includes('..'))
     throw new PackError('INVALID_PATH', 'Invalid pack path', 400);
@@ -127,6 +141,21 @@ export class FilePackStore implements PackStore {
       !Array.isArray(result.assets)
     )
       throw new PackError('INVALID_MANIFEST', 'Pack manifest identity mismatch', 503);
+    if (
+      result.synthetic !== false ||
+      !Array.isArray(result.provenance) ||
+      !result.provenance.length ||
+      result.provenance.some((source) => source.synthetic !== false)
+    )
+      throw new PackError(
+        'SYNTHETIC_DATA_REJECTED',
+        'Pack provenance must contain only explicitly real sources',
+        503,
+      );
+    for (const entry of result.assets.filter((asset) => asset.purpose === 'assessment')) {
+      const buffer = await this.checkedAsset(regionId, version, entry);
+      assertRealAssessment(JSON.parse(buffer.toString('utf8')) as RegionPack);
+    }
     return result;
   }
   async asset(regionId: string, version: string, name: string) {
@@ -134,26 +163,29 @@ export class FilePackStore implements PackStore {
     const manifest = await this.manifest(regionId, version);
     const asset = manifest.assets.find((item) => item.path === name);
     if (!asset) throw new PackError('ASSET_NOT_FOUND', 'Asset is not part of manifest');
-    const path = await this.safePath(regionId, version, name);
+    const buffer = await this.checkedAsset(regionId, version, asset);
+    return { buffer, asset };
+  }
+  private async checkedAsset(regionId: string, version: string, asset: PackAsset) {
+    const path = await this.safePath(regionId, version, asset.path);
     if ((await stat(path)).size !== asset.bytes)
       throw new PackError('INTEGRITY_FAILED', 'Pack asset size mismatch', 503);
     const buffer = await readFile(path);
     if (createHash('sha256').update(buffer).digest('hex') !== asset.sha256)
       throw new PackError('INTEGRITY_FAILED', 'Pack asset checksum mismatch', 503);
-    return { buffer, asset };
+    return buffer;
   }
   async assessment(regionId: string, version?: string): Promise<RegionPack> {
     const manifest = await this.manifest(regionId, version);
     if (
-      !manifest.synthetic &&
-      (manifest.releaseStatus !== 'reviewed' ||
-        !manifest.review.maritime ||
-        !manifest.review.coverage ||
-        !manifest.review.geometry ||
-        !manifest.review.stationMappings ||
-        !manifest.review.onWaterValidation ||
-        !manifest.review.reviewedBy ||
-        !manifest.review.reviewedAt)
+      manifest.releaseStatus !== 'reviewed' ||
+      !manifest.review.maritime ||
+      !manifest.review.coverage ||
+      !manifest.review.geometry ||
+      !manifest.review.stationMappings ||
+      !manifest.review.onWaterValidation ||
+      !manifest.review.reviewedBy ||
+      !manifest.review.reviewedAt
     ) {
       throw new PackError(
         'REVIEW_REQUIRED',
@@ -164,8 +196,10 @@ export class FilePackStore implements PackStore {
     const entry = manifest.assets.find((asset) => asset.purpose === 'assessment');
     if (!entry)
       throw new PackError('ASSESSMENT_UNAVAILABLE', 'Pack has no assembled assessment data', 503);
-    return JSON.parse(
+    const result = JSON.parse(
       (await this.asset(regionId, manifest.version, entry.path)).buffer.toString('utf8'),
     ) as RegionPack;
+    assertRealAssessment(result);
+    return result;
   }
 }

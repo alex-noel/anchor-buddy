@@ -299,6 +299,8 @@ export interface Assessment {
   /** Seabed evidence at the drop point; unknown never means suitable holding. */
   bedding: Bedding;
   requiredRodeM: number | null;
+  /** Resolved anchor/mooring swing geometry; null for berths or an unresolved model.
+   * A calculated footprint does not establish site clearance or suitability. */
   swingRadiusM: number | null;
   scopeRatio: number | null;
   depthAllowancePercent: 0 | 20 | 30;

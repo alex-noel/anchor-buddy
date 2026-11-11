@@ -6,9 +6,10 @@ from pathlib import Path
 import sys
 
 from .geometry import extract_s57, import_official_geojson
-from .packs import build_pack, publish_object_store, verify_pack
+from .packs import build_pack, publish_object_store, verify_pack, require_real_sources
 from .sources import CATALOG_URL, NOAA_HOSTS, download_cells, fetch_bytes, parse_catalog
 from .postgis import index_pack
+from .assessment import write_assessment
 
 
 def main() -> None:
@@ -38,6 +39,10 @@ def main() -> None:
     build.add_argument("--tiles", action="store_true", help="Requires separately installed tippecanoe")
     verify = commands.add_parser("verify", help="Verify every artifact checksum and size")
     verify.add_argument("directory", type=Path)
+    assemble = commands.add_parser("assemble", help="Convert checked real ENC geometry into unreviewed assessment JSON and an omission report")
+    assemble.add_argument("directory", type=Path, help="An immutable verified source-pack version directory")
+    assemble.add_argument("--config", type=Path, required=True, help="Region name/timezone and explicit source datum/unit mapping reviews")
+    assemble.add_argument("--output", type=Path, required=True, help="A new output directory; never overwrites an earlier assembly")
     publish = commands.add_parser("publish", help="Publish a verified pack to a configured S3-compatible bucket")
     publish.add_argument("directory", type=Path)
     publish.add_argument("--destination", required=True)
@@ -62,6 +67,9 @@ def main() -> None:
             result = {"output": str(args.output), "features": len(features), "applicabilityResolved": False}
         elif args.command == "build":
             recipe = json.loads(args.recipe.read_text())
+            if recipe.get("synthetic") is not False:
+                raise ValueError("Production recipes must explicitly declare synthetic:false; synthetic packs are not supported")
+            require_real_sources(recipe.get("provenance"))
             base = args.recipe.resolve().parent
             features = []
             for file in recipe["featureFiles"]:
@@ -69,6 +77,8 @@ def main() -> None:
             result = build_pack(root=args.root, region_id=recipe["regionId"], version=recipe["version"], features=features, provenance=recipe["provenance"], bounds=recipe["bounds"], valid_until=recipe["validUntil"], synthetic=recipe.get("synthetic", False), review=recipe.get("review"), attachments={item["name"]: (base / item["file"], item["purpose"]) for item in recipe.get("attachments", [])}, create_tiles=args.tiles, offline_chart=recipe.get("offlineChart"))
         elif args.command == "verify":
             result = verify_pack(args.directory)
+        elif args.command == "assemble":
+            result = write_assessment(args.directory, json.loads(args.config.read_text()), args.output)
         elif args.command == "index-postgis":
             result = index_pack(args.directory)
         else:

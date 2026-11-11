@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import {
   assessCandidate,
@@ -37,6 +37,8 @@ export default function PlannerScreen({
   onWatch,
   onDetails,
   layers,
+  nativeWatchAvailable = false,
+  onEditSearch,
 }: {
   candidate: Candidate;
   pack: RegionPack;
@@ -46,9 +48,11 @@ export default function PlannerScreen({
   depthAllowancePercent: 0 | 20 | 30;
   offline: boolean;
   units: UnitSystem;
-  onWatch: (p: Position, r: number, request?: SearchRequest) => void;
+  onWatch: (p: Position, r: number | undefined, request?: SearchRequest) => void;
   onDetails: (a: Assessment, request?: SearchRequest) => void;
   layers?: { depth: boolean; bedding: boolean; marks: boolean };
+  nativeWatchAvailable?: boolean;
+  onEditSearch?: (search: SearchRequest, position: Position) => void;
 }) {
   const { width } = useWindowDimensions();
   const [lat, setLat] = useState(String(candidate.position[1]));
@@ -60,6 +64,56 @@ export default function PlannerScreen({
   const setRode = (text: string) => setRodeDraft({ ...currentRodeDraft, text });
   const [checks, setChecks] = useState<boolean[]>([false, false, false, false]);
   const [error, setError] = useState('');
+  const [findingPosition, setFindingPosition] = useState(false);
+  const locationRequest = useRef(0);
+  useEffect(
+    () => () => {
+      locationRequest.current++;
+    },
+    [],
+  );
+  const cancelLocation = () => {
+    locationRequest.current++;
+    setFindingPosition(false);
+  };
+  const capturePosition = async () => {
+    const request = ++locationRequest.current;
+    setFindingPosition(true);
+    setError('');
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (request !== locationRequest.current) return;
+      if (!permission.granted)
+        throw new Error(
+          'Location permission denied. Enter coordinates or choose a point on the map.',
+        );
+      const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
+      if (request !== locationRequest.current) return;
+      const { latitude, longitude, accuracy } = fix.coords;
+      const age = Date.now() - fix.timestamp;
+      if (!Number.isFinite(fix.timestamp) || age < -5000 || age > 15_000)
+        throw new Error('The location is not recent enough. Try again for a fresh position.');
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        Math.abs(latitude) > 85 ||
+        Math.abs(longitude) > 180
+      )
+        throw new Error(
+          'The location is invalid or outside supported map coverage. Choose a position within 85° north or south.',
+        );
+      if (accuracy === null || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 15)
+        throw new Error('Wait for a position accuracy of 15 metres or better, then try again.');
+      setLat(String(latitude));
+      setLon(String(longitude));
+      setChecks([false, false, false, false]);
+    } catch (cause) {
+      if (request === locationRequest.current)
+        setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (request === locationRequest.current) setFindingPosition(false);
+    }
+  };
   const effectiveSearch = useMemo<SearchRequest>(() => {
     const { deployedRodeM: _priorRode, ...preferences } = search;
     return { ...preferences, ...(rode.trim() ? { deployedRodeM } : {}) };
@@ -125,10 +179,12 @@ export default function PlannerScreen({
     units,
   ]);
   const assessment = calculation.assessment;
+  const footprintResolved = assessment?.requiredRodeM != null && assessment?.swingRadiusM != null;
   const elapsedEvidence = assessment?.reasons.some(
     (reason) => reason.code === 'elapsed_stay' || reason.code.startsWith('currently_'),
   );
   const change = (set: (s: string) => void) => (value: string) => {
+    cancelLocation();
     set(value);
     setChecks([false, false, false, false]);
     setError('');
@@ -160,11 +216,21 @@ export default function PlannerScreen({
           check remain unchanged.
         </Notice>
       ) : null}
+      {onEditSearch ? (
+        <Button
+          secondary
+          disabled={!assessment}
+          onPress={() => onEditSearch(effectiveSearch, pin.position)}
+        >
+          Edit stay and search limits
+        </Button>
+      ) : null}
       <Card>
         <Eyebrow>1 · DROP POSITION</Eyebrow>
         {assessment ? (
           <View style={{ height: width < 700 ? 300 : 340, borderRadius: 12, overflow: 'hidden' }}>
             <Chart
+              units={units}
               pack={pack}
               assessments={[assessment]}
               selectedId={assessment.id}
@@ -174,8 +240,10 @@ export default function PlannerScreen({
               showBedding={layers?.bedding ?? true}
               showMarks={layers?.marks ?? false}
               initialZoom={16}
+              selectOnTap
               onSelect={() => onDetails(assessment, effectiveSearch)}
               onPin={(position) => {
+                cancelLocation();
                 setLon(String(position[0]));
                 setLat(String(position[1]));
                 setChecks([false, false, false, false]);
@@ -185,8 +253,10 @@ export default function PlannerScreen({
           </View>
         ) : null}
         <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
-          The shaded circle shows the complete assessed footprint. Long-press the map on mobile, or
-          double-click in the browser, to adjust the drop point.
+          {footprintResolved
+            ? 'The shaded circle shows calculated swing geometry, not a clearance or holding guarantee. '
+            : 'The full swing footprint is unknown; no swing circle is shown. '}
+          Tap the map or enter coordinates to adjust the drop point.
         </Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
           <Field signed label="Latitude" value={lat} onChange={change(setLat)} />
@@ -195,26 +265,17 @@ export default function PlannerScreen({
         <Button
           secondary
           icon="crosshair"
-          onPress={async () => {
-            try {
-              const permission = await Location.requestForegroundPermissionsAsync();
-              if (!permission.granted) throw new Error('Location permission denied.');
-              const fix = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.Highest,
-              });
-              if ((fix.coords.accuracy ?? Infinity) > 15)
-                throw new Error('Wait for a more accurate position.');
-              setLat(String(fix.coords.latitude));
-              setLon(String(fix.coords.longitude));
-              setChecks([false, false, false, false]);
-              setError('');
-            } catch (cause) {
-              setError(cause instanceof Error ? cause.message : String(cause));
-            }
-          }}
+          disabled={findingPosition}
+          onPress={() => void capturePosition()}
         >
-          Use current position
+          {findingPosition ? 'Getting current position…' : 'Use current position'}
         </Button>
+        {findingPosition ? (
+          <Button secondary small onPress={cancelLocation}>
+            Cancel location request
+          </Button>
+        ) : null}
+        {error ? <Notice tone="warning">{error}</Notice> : null}
         {calculation.error ? (
           <Notice tone="warning">
             {calculation.error} No current assessment is available until the inputs are valid.
@@ -230,7 +291,10 @@ export default function PlannerScreen({
                   depth(assessment.minDepthM, units) + ' / ' + depth(assessment.maxDepthM, units),
                 ],
                 ['REQUIRED RODE', depth(assessment.requiredRodeM, units)],
-                ['SWING RADIUS', depth(assessment.swingRadiusM, units)],
+                [
+                  'CALCULATED SWING RADIUS',
+                  depth(footprintResolved ? assessment.swingRadiusM : null, units),
+                ],
               ].map(([label, value]) => (
                 <View key={label} style={{ gap: 8, minWidth: 130 }}>
                   <Eyebrow>{label}</Eyebrow>
@@ -242,6 +306,7 @@ export default function PlannerScreen({
         ) : null}
         {assessment?.reasons
           .filter((reason) => reason.severity !== 'info')
+          .sort((a, b) => Number(b.severity === 'excluded') - Number(a.severity === 'excluded'))
           .slice(0, 5)
           .map((reason, index) => (
             <Notice key={index} tone="warning">
@@ -257,11 +322,6 @@ export default function PlannerScreen({
         >
           Review assessment & sources
         </Button>
-        {pack.validation.status === 'synthetic' ? (
-          <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
-            This position is based on bundled sample geometry, not a reviewed anchorage.
-          </Text>
-        ) : null}
       </Card>
       <Card>
         <Eyebrow>2 · DEPLOYED RODE</Eyebrow>
@@ -301,22 +361,47 @@ export default function PlannerScreen({
         ))}
         <View style={{ height: 1, backgroundColor: c.line, marginVertical: 4 }} />
         <Eyebrow>4 · ANCHOR WATCH</Eyebrow>
+        {!nativeWatchAvailable ? (
+          <Notice>
+            Monitoring requires the installed iOS or Android app with the native watch module. You
+            can review the plan here; this build cannot run an anchor watch.
+          </Notice>
+        ) : null}
         <Button
           icon="radio"
-          disabled={!assessment || !!elapsedEvidence || !checks.every(Boolean)}
+          disabled={
+            nativeWatchAvailable && (!assessment || !!elapsedEvidence || !checks.every(Boolean))
+          }
           onPress={() => {
-            if (assessment && checks.every(Boolean))
-              onWatch(pin.position, assessment.swingRadiusM ?? 50, effectiveSearch);
+            if (!nativeWatchAvailable) onWatch(candidate.position, undefined);
+            else if (assessment && checks.every(Boolean))
+              onWatch(
+                pin.position,
+                footprintResolved ? assessment.swingRadiusM! : undefined,
+                effectiveSearch,
+              );
           }}
         >
-          Continue to anchor watch
+          {nativeWatchAvailable ? 'Continue to anchor watch' : 'View anchor watch requirements'}
         </Button>
+        {nativeWatchAvailable && !checks.every(Boolean) ? (
+          <Text style={{ color: c.muted, fontSize: 12 }}>
+            Complete all four arrival checks to continue.
+          </Text>
+        ) : null}
+        {elapsedEvidence ? (
+          <Notice tone="warning">
+            Review the stay dates and current source coverage before continuing with this plan.
+          </Notice>
+        ) : null}
         <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
           A position watch can be set independently of an assessment. It does not validate this
           anchorage or guarantee holding.
+          {!footprintResolved
+            ? ' Enter and confirm an alarm radius in the watch; no radius is suggested from this unresolved footprint.'
+            : ''}
         </Text>
       </Card>
-      {error ? <Notice tone="warning">{error}</Notice> : null}
     </ScrollView>
   );
 }

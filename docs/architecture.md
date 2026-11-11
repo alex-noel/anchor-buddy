@@ -32,14 +32,14 @@ flowchart LR
 
 | Component              | Responsibility                                                                                                                                                                   |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/mobile`          | Expo development app, map/list discovery, vessel and search inputs, result detail, anchor planning, offline installation, watch controls and explicit simulation                 |
+| `apps/mobile`          | Expo development app, map/list discovery, vessel and search inputs, result detail, anchor planning, offline installation and native watch controls                               |
 | `packages/domain`      | Serializable interfaces; strict input validation; deterministic geometry, depth/rode/footprint checks, temporal and spatial evidence checks, tariffs and ranking                 |
-| `modules/anchor-watch` | Expo bridge and config plugin; native location processing, permissions, notifications, persistence, liveness verification and a separate opt-in simulation harness               |
+| `modules/anchor-watch` | Expo bridge and config plugin; native location processing, permissions, notifications, persistence and liveness verification; replay harnesses exist only in automated tests     |
 | `apps/api`             | Fastify endpoints, public provider metadata, NWS/CO-OPS adapter boundaries, read-only immutable-pack delivery and shared-engine searches                                         |
 | `workers/ingest`       | Selected NOAA ENC retrieval, GDAL S-57 extraction/update handling, provenance, spatial imports, pack construction, checksums, optional PostGIS indexing and operator publication |
 | `infra`                | Container recipes, local Compose orchestration and the PostGIS provenance/geometry/pack schema                                                                                   |
 
-PostGIS is an operator index, not a hidden dependency of offline assessment. The API can run its synthetic development fixture without a database. The Compose API consumes a read-only pack volume. Object-storage publication is an explicit operator command, not an automatic side effect of app search.
+PostGIS is an operator index, not a hidden dependency of offline assessment. The API can serve live discovery and persistent source snapshots without a database; synthetic packs are rejected. The Compose API consumes a read-only pack volume. Object-storage publication is an explicit operator command, not an automatic side effect of app search.
 
 ## Application flow and local state
 
@@ -57,7 +57,7 @@ All engine distances and depths use metres; winds/currents use knots; directions
 
 A `RegionPack` contains source records, unsimplified depth/hazard/restriction/holding geometry, positive coverage declarations, forecast and water-level intervals, places, tariffs, display metadata and review state. Weather and tide intervals identify their applicable coverage areas; a generic regional coverage polygon does not make an unrelated grid cell or tide station valid everywhere. A reviewed tide-station relationship must apply to the evaluated location, footprint, datum and interval. Unknown values remain unknown.
 
-The engine evaluates arrival through departure contingency and reports one of three outcomes: `passes`, `excluded`, or `insufficient_evidence`. An exclusion or missing critical evidence cannot be compensated by a better price or distance. Synthetic results also carry an explicit `simulated` marker. A passing synthetic case is a test result, not a real-world recommendation.
+The engine evaluates arrival through departure contingency and reports one of three outcomes: `passes`, `excluded`, or `insufficient_evidence`. An exclusion or missing critical evidence cannot be compensated by a better price or distance. Synthetic factories are isolated in a test-only entry point. Runtime installation, restoration, live responses and API searches reject synthetic or unclassified source provenance.
 
 Assessment time is an explicit input. Mobile supplies a current timestamp and refreshes it every minute, on foreground return and on browser reconnect; the API supplies its own server timestamp. Expired evidence or an elapsed stay cannot retain a current pass. Open details are recalculated too. Omitted or historical context remains reproducible historical replay and is labelled accordingly. Reconnection triggers local reassessment; downloading newer evidence remains an explicit action in Settings.
 
@@ -77,11 +77,13 @@ Publication builds in staging, verifies assets, publishes an immutable version a
 
 Native mobile storage uses SQLite for profiles/preferences and installed assessment records, plus app-private regional files for verified assets. Ingestion creates a separate analysis SQLite artifact containing full geometry and indexing. The browser preview uses its web persistence adapters and Cache Storage, and cannot provide native background monitoring or native offline tile caching.
 
-Offline chart caching is distinct from analysis caching. A reviewed manifest must authorize an operator-owned/licensed style and resources. MapLibre Native can then cache the permitted region. Public OpenStreetMap tiles are not bulk-downloaded; saving a demonstration snapshot does not create a complete offline nautical chart.
+Offline chart caching is distinct from analysis caching. A reviewed manifest must authorize an operator-owned/licensed style and resources. MapLibre Native can then cache the permitted region. Public OpenStreetMap tiles are not bulk-downloaded; saving a source snapshot does not create a complete offline nautical chart.
 
 ## Native watch and service boundary
 
 The watch receives an explicitly confirmed physical anchor position and alarm radius. It is not armed by AI or by merely selecting a suggested map pin. The bridge and native code require a recent test alarm, user confirmations and appropriate permissions. A new session starts in `arming` and becomes `monitoring` only after a fresh accurate fix. Poor accuracy, boundary overlap, stale location and an actual breach produce distinct states and latched alerts; acknowledging an alert cannot make a continuing problem disappear. Radius edits are explicit and never recenter the anchor.
+
+The browser reports native monitoring as unavailable and exposes no simulator, artificial positions or alarm-test controls. Manual native watch inputs start blank unless supplied by an actual anchor plan; existing native sessions are queried without stopping, replacing or recentering them.
 
 Swift uses CoreLocation background location and local notifications. Kotlin uses a user-started location foreground service with a persistent status notification and a separate alarm channel. Each native runtime evaluates fixes and monotonic freshness independently of JavaScript. Native state survives for inspection, but persisted “armed” state never proves a service is alive: after process death/restart the session is interrupted and must be explicitly rearmed. The UI verifies current status on resume and labels an unverified heartbeat accordingly.
 

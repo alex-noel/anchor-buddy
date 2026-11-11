@@ -48,9 +48,43 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     offline: {
       allowed: true,
       conditions:
-        'Retain source, retrieval and expiry. CC BY attribution; values converted to knots. Cache responses until provider Expires; identifying User-Agent required.',
+        'Retain source, retrieval and provider expiry. CC BY attribution; values converted to knots. Identical requests wait at least three hours or until a later provider expiry; this requery limit never extends evidence freshness. Identifying User-Agent required.',
     },
-    freshnessSeconds: 3600,
+    freshnessSeconds: null,
+  },
+  {
+    id: 'met-ocean',
+    name: 'MET Norway Northwestern Europe significant waves',
+    kind: 'weather',
+    status: 'implemented',
+    authentication: 'none',
+    coverage:
+      'Northwestern European model seas only; the API returns the actual sea-grid coordinate. Model estimates do not establish shelter or nautical coverage.',
+    attribution: 'MET Norway, CC BY4.0 / NLOD2.0',
+    documentationUrl: 'https://api.met.no/weatherapi/oceanforecast/2.0/documentation',
+    offline: {
+      allowed: true,
+      conditions:
+        'Retain model point, retrieval and expiry. Significant wave height is not a maximum individual-wave or verified local-shelter assessment.',
+    },
+    freshnessSeconds: null,
+  },
+  {
+    id: 'emodnet-context',
+    name: 'EMODnet European point depth and seabed context',
+    kind: 'chart-display',
+    status: 'implemented',
+    authentication: 'none',
+    coverage:
+      'Available European DTM and seabed samples at a selected point only. Outside coverage remains unknown.',
+    attribution: 'EMODnet Bathymetry and Geology, European Union and referenced originators',
+    documentationUrl: 'https://emodnet.ec.europa.eu/en/emodnet-web-service-documentation',
+    offline: {
+      allowed: true,
+      conditions:
+        'Preserve signed model values, source datum, classification scale, vintage and originator terms. Context is never an assessment depth/holding/coverage layer.',
+    },
+    freshnessSeconds: 86400,
   },
   {
     id: 'osm-overpass',

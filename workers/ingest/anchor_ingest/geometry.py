@@ -75,6 +75,7 @@ def extract_s57(base: Path) -> tuple[list[dict], dict]:
         features = []
         for layer in dataset:
             layer_name = layer.GetName()
+            point_ordinals = {}
             for feature in layer:
                 fields = {key: feature.GetField(key) for key in feature.keys()}
                 if layer_name == "DSID":
@@ -85,7 +86,16 @@ def extract_s57(base: Path) -> tuple[list[dict], dict]:
                     continue
                 geometry = json.loads(shape.ExportToJson())
                 validate_geometry(geometry, require_gdal=True)
-                features.append({"type": "Feature", "id": f"{base.stem}:{layer_name}:{feature.GetFID()}", "geometry": geometry, "properties": {**fields, "sourceId": base.stem, "objectClass": layer_name, "sourceEdition": None, "verticalDatum": None, "geometryUnmodified": True}})
+                fid = feature.GetFID()
+                feature_id = f"{base.stem}:{layer_name}:{fid}"
+                if layer_name == "SOUNDG":
+                    # SPLIT_MULTIPOINT emits several soundings with the same
+                    # original GDAL FID. Retain every point, including coincident
+                    # soundings, instead of colliding in the SQLite primary key.
+                    ordinal = point_ordinals.get(fid, 0)
+                    point_ordinals[fid] = ordinal + 1
+                    feature_id += f":point:{ordinal}"
+                features.append({"type": "Feature", "id": feature_id, "geometry": geometry, "properties": {**fields, "sourceId": base.stem, "sourceFeatureId": fid, "objectClass": layer_name, "sourceEdition": None, "verticalDatum": None, "geometryUnmodified": True}})
         if messages:
             raise ValueError("GDAL reported an ENC/update warning: " + "; ".join(messages))
         if not metadata:
@@ -93,7 +103,11 @@ def extract_s57(base: Path) -> tuple[list[dict], dict]:
         # Preserve raw identifiers. Datum codes require a reviewed lookup before assessment.
         for feature in features:
             feature["properties"]["sourceEdition"] = metadata.get("DSID_EDTN")
+            # VDAT describes heights; SDAT describes soundings. Neither is an
+            # inferred domain datum. Keep unit codes too, before any conversion.
             feature["properties"]["verticalDatum"] = metadata.get("DSPM_VDAT")
+            feature["properties"]["soundingDatum"] = metadata.get("DSPM_SDAT")
+            feature["properties"]["depthUnitsCode"] = metadata.get("DSPM_DUNI")
         return features, {"baseFile": base.name, "updateSequence": [path.name for path in sequence], "metadata": metadata}
     finally:
         gdal.PopErrorHandler()
@@ -102,7 +116,9 @@ def extract_s57(base: Path) -> tuple[list[dict], dict]:
 def import_official_geojson(path: Path, *, source_id: str, source_url: str, jurisdiction: str, valid_from: str, valid_until: str, synthetic: bool = False) -> list[dict]:
     from datetime import datetime
     from urllib.parse import urlparse
-    if not synthetic and (urlparse(source_url).scheme != "https" or not (urlparse(source_url).hostname or "").endswith(".gov")):
+    if synthetic is not False:
+        raise ValueError("Synthetic rule, habitat or notice imports are not supported")
+    if urlparse(source_url).scheme != "https" or not (urlparse(source_url).hostname or "").endswith(".gov"):
         raise ValueError("Official rule/habitat/notice input needs its authoritative .gov source URL")
     if datetime.fromisoformat(valid_until.replace("Z", "+00:00")) <= datetime.fromisoformat(valid_from.replace("Z", "+00:00")):
         raise ValueError("Invalid source validity interval")

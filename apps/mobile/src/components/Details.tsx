@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Linking, Pressable, Text, View } from 'react-native';
 import type { Assessment, RegionPack, UnitSystem } from '@anchor-buddy/domain';
 import Sheet from './Sheet';
@@ -12,14 +12,19 @@ export default function Details({
   units,
   onClose,
   onPlan,
+  onSources,
 }: {
   assessment: Assessment;
   pack: RegionPack;
   units: UnitSystem;
   onClose: () => void;
   onPlan: () => void;
+  onSources?: () => void;
 }) {
+  const [allWeather, setAllWeather] = useState(false);
   const p = a.candidate.place;
+  const anchored = a.candidate.kind === 'anchorage' || a.candidate.kind === 'generated';
+  const footprintResolved = a.requiredRodeM !== null && a.swingRadiusM !== null;
   const elapsedEvidence = a.reasons.some(
     (reason) => reason.code === 'elapsed_stay' || reason.code.startsWith('currently_'),
   );
@@ -39,12 +44,6 @@ export default function Details({
         <Text style={{ fontSize: 11, color: c.muted }}>
           Reassessed {localTime(a.context.assessedAt)} · {a.context.purpose}
         </Text>
-      ) : null}
-      {a.simulated ? (
-        <Notice tone="warning">
-          Illustrative demo data. These coordinates, depths, prices and conditions are not
-          recommendations for real navigation.
-        </Notice>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 12 }}>
         <Card style={{ flex: 1, padding: 16 }}>
@@ -83,21 +82,39 @@ export default function Details({
           <Text style={{ fontSize: 12, lineHeight: 19, color: c.ink, flex: 1 }}>{r.message}</Text>
         </View>
       ))}
-      <View style={{ flexDirection: 'row', gap: 12 }}>
-        <Card style={{ flex: 1, padding: 16 }}>
-          <Eyebrow>REQUIRED RODE</Eyebrow>
-          <Text style={{ color: c.ink, fontSize: 21 }}>{depth(a.requiredRodeM, units)}</Text>
-        </Card>
-        <Card style={{ flex: 1, padding: 16 }}>
-          <Eyebrow>FULL SWING RADIUS</Eyebrow>
-          <Text style={{ color: c.ink, fontSize: 21 }}>{depth(a.swingRadiusM, units)}</Text>
-        </Card>
-      </View>
+      {anchored ? (
+        <>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Card style={{ flex: 1, padding: 16 }}>
+              <Eyebrow>REQUIRED RODE</Eyebrow>
+              <Text style={{ color: c.ink, fontSize: 21 }}>{depth(a.requiredRodeM, units)}</Text>
+            </Card>
+            <Card style={{ flex: 1, padding: 16 }}>
+              <Eyebrow>CALCULATED SWING RADIUS</Eyebrow>
+              <Text style={{ color: c.ink, fontSize: 21 }}>
+                {depth(footprintResolved ? a.swingRadiusM : null, units)}
+              </Text>
+            </Card>
+          </View>
+          <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+            {footprintResolved
+              ? 'Calculated geometry does not establish clear seabed, suitable holding or permission to anchor.'
+              : 'The full swing footprint has not been established from the available depth, water-level and equipment evidence.'}
+          </Text>
+        </>
+      ) : null}
       <Notice>
         {a.exposure.label}. Exposure is a coastline/fetch estimate, not a local shelter guarantee.
       </Notice>
-      <Eyebrow>CONDITIONS THROUGH YOUR STAY</Eyebrow>
-      {a.weather.slice(0, 12).map((w, i) => (
+      <Eyebrow>STAY & DEPARTURE CONTINGENCY</Eyebrow>
+      {!a.weather.length ? (
+        <Notice>
+          No forecast has verified spatial coverage at this position for this stay. Sources &
+          coverage may contain a forecast for the search centre; it cannot establish local shelter
+          or conditions here.
+        </Notice>
+      ) : null}
+      {(allWeather ? a.weather : a.weather.slice(0, 12)).map((w, i) => (
         <View
           key={i}
           style={{ borderBottomWidth: 1, borderBottomColor: c.line, paddingBottom: 11, gap: 7 }}
@@ -113,6 +130,18 @@ export default function Details({
           {w.warnings.length ? <Notice tone="warning">{w.warnings.join('; ')}</Notice> : null}
         </View>
       ))}
+      {a.weather.length > 12 ? (
+        <Button secondary onPress={() => setAllWeather(!allWeather)}>
+          {allWeather
+            ? 'Show first 12 intervals'
+            : `Show all ${a.weather.length} forecast intervals`}
+        </Button>
+      ) : null}
+      {onSources ? (
+        <Button secondary onPress={onSources}>
+          Sources & coverage
+        </Button>
+      ) : null}
       <Eyebrow>ACCESS & AVAILABILITY</Eyebrow>
       <Text style={{ fontSize: 12, lineHeight: 20, color: c.ink }}>
         Approach: {a.approach.status.replaceAll('_', ' ')}. {a.approach.notes.join(' ')}
@@ -142,6 +171,11 @@ export default function Details({
         {a.cost.notes.join(' ') || 'An estimate is not a booking or confirmation of availability.'}
       </Text>
       <Eyebrow>SOURCES & FRESHNESS</Eyebrow>
+      {!a.sourceIds.length ? (
+        <Text style={{ fontSize: 12, color: c.muted }}>
+          No applicable evidence is available for this position.
+        </Text>
+      ) : null}
       {pack.sources
         .filter((s) => a.sourceIds.includes(s.id))
         .map((source) => (
@@ -154,11 +188,10 @@ export default function Details({
             <Text style={{ fontSize: 12, color: c.green, fontWeight: '600' }}>{source.name} ↗</Text>
             <Text style={{ fontSize: 10, color: c.muted }}>
               Retrieved {localTime(source.retrievedAt)}
-              {source.synthetic ? ' · Synthetic fixture' : ''}
             </Text>
           </Pressable>
         ))}
-      {a.candidate.kind === 'anchorage' || a.candidate.kind === 'generated' ? (
+      {anchored ? (
         <Button
           onPress={onPlan}
           disabled={elapsedEvidence}

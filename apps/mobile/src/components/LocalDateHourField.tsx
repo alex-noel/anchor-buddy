@@ -41,7 +41,13 @@ export default function LocalDateHourField({
             accessibilityRole="button"
             accessibilityLabel={`${label} date: ${localDateLabel(value.date)}`}
             accessibilityState={{ expanded: open }}
-            onPress={() => setOpen(!open)}
+            onPress={() => {
+              if (!open) {
+                const [y, m] = value.date.split('-').map(Number);
+                setMonth(new Date(y, m - 1, 1, 12));
+              }
+              setOpen(!open);
+            }}
             style={{ ...s.inputWrap, minHeight: 46, gap: 8 }}
           >
             <Icon name="calendar" size={16} color={c.muted} />
@@ -94,6 +100,19 @@ export default function LocalDateHourField({
               <Icon name="chevron-right" />
             </Pressable>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Set ${label.toLowerCase()} date to today`}
+            onPress={() => {
+              const today = new Date();
+              setMonth(new Date(today.getFullYear(), today.getMonth(), 1, 12));
+              onChange({ ...value, date: localDateKey(today), occurrence: undefined });
+              setOpen(false);
+            }}
+            style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 10 }}
+          >
+            <Text style={{ color: c.blue, fontWeight: '600', fontSize: 13 }}>Today</Text>
+          </Pressable>
           <View style={{ flexDirection: 'row' }}>
             {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, i) => (
               <Text

@@ -48,7 +48,7 @@ export class NwsLiveProvider {
         'NWS raw forecast grid',
         result.grid.provenance.url,
         result.grid.provenance.retrievedAt,
-        new Date(Date.parse(result.grid.provenance.retrievedAt) + 900000).toISOString(),
+        result.grid.provenance.validUntil,
         'NOAA National Weather Service — wind converted to knots',
         'US government public data',
       ),
@@ -57,7 +57,7 @@ export class NwsLiveProvider {
         'NWS active warnings',
         result.alerts.provenance.url,
         result.alerts.provenance.retrievedAt,
-        new Date(Date.parse(result.alerts.provenance.retrievedAt) + 900000).toISOString(),
+        result.alerts.provenance.validUntil,
         'NOAA National Weather Service',
         'US government public data',
       ),
@@ -127,7 +127,9 @@ export class NwsLiveProvider {
         message: `Official grid and active alerts at the selected US coordinate; missing grid parameters: ${result.missing.join(', ') || 'none'}. Marine spatial coverage and future warning completeness remain unreviewed.`,
         attribution: sources[0]!.attribution,
         retrievedAt: sources[0]!.retrievedAt,
-        validUntil: sources[0]!.validUntil,
+        validUntil: new Date(
+          Math.min(...sources.map((source) => Date.parse(source.validUntil))),
+        ).toISOString(),
         documentationUrl: 'https://www.weather.gov/documentation/services-web-api',
       },
     };

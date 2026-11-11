@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 CATALOG_URL = "https://charts.noaa.gov/ENCs/FL_ENCProdCat_19115.xml"
-NOAA_HOSTS = {"charts.noaa.gov", "distribution.charts.noaa.gov"}
+NOAA_HOSTS = {"charts.noaa.gov", "www.charts.noaa.gov", "distribution.charts.noaa.gov"}
 
 
 def fetch_bytes(url: str, *, allowed_hosts: set[str], limit: int = 100_000_000) -> bytes:
@@ -48,7 +48,8 @@ def parse_catalog(content: bytes) -> list[dict]:
         if not names or not urls:
             continue
         url = urls[0]
-        if urlparse(url).hostname not in NOAA_HOSTS:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname not in NOAA_HOSTS or parsed.username or parsed.password:
             continue
         bounds = {}
         for item in metadata.iter():
@@ -94,6 +95,7 @@ def extract_exchange_set(content: bytes, target: Path, *, max_uncompressed: int 
 
 
 def download_cells(cells: list[str], target: Path, catalog_url: str = CATALOG_URL) -> dict:
+    target = target.resolve()
     catalog_bytes = fetch_bytes(catalog_url, allowed_hosts=NOAA_HOSTS, limit=25_000_000)
     catalog = {item["cell"]: item for item in parse_catalog(catalog_bytes)}
     unknown = set(cells) - catalog.keys()
@@ -106,7 +108,7 @@ def download_cells(cells: list[str], target: Path, catalog_url: str = CATALOG_UR
         record = catalog[cell]
         content = fetch_bytes(record["url"], allowed_hosts=NOAA_HOSTS)
         files = extract_exchange_set(content, target / cell)
-        provenance.append({"id": cell, "url": record["url"], "retrievedAt": utc_now(), "attribution": "NOAA Office of Coast Survey", "sha256": hashlib.sha256(content).hexdigest(), "catalog": record, "files": [str(path.relative_to(target)) for path in files]})
+        provenance.append({"id": cell, "url": record["url"], "retrievedAt": utc_now(), "attribution": "NOAA Office of Coast Survey", "synthetic": False, "sha256": hashlib.sha256(content).hexdigest(), "catalog": record, "files": [str(path.relative_to(target)) for path in files]})
         time.sleep(0.25)
     result = {"catalogUrl": catalog_url, "catalogSha256": hashlib.sha256(catalog_bytes).hexdigest(), "sources": provenance}
     target.mkdir(parents=True, exist_ok=True)

@@ -19,6 +19,28 @@ SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$")
 REVIEW_GATES = ("maritime", "coverage", "geometry", "stationMappings", "onWaterValidation")
 
 
+def require_real_sources(sources: object) -> None:
+    if not isinstance(sources, list) or not sources or any(not isinstance(source, dict) or source.get("synthetic") is not False for source in sources):
+        raise ValueError("Source provenance must contain only explicitly real sources (synthetic:false)")
+
+
+def reject_synthetic(value: object) -> None:
+    """Reject mixed evidence too; a real top-level label cannot sanitize nested records."""
+    if isinstance(value, dict):
+        if "synthetic" in value and value["synthetic"] is not False:
+            raise ValueError("Synthetic data is not supported by the production ingestion pipeline")
+        if isinstance(value.get("validation"), dict) and value["validation"].get("status") == "synthetic":
+            raise ValueError("Synthetic assessment data is not supported")
+        for name, child in value.items():
+            if name in {"sources", "provenance"} and isinstance(child, list):
+                if any(not isinstance(source, dict) or source.get("synthetic") is not False for source in child):
+                    raise ValueError("Mixed or unclassified source provenance is not supported")
+            reject_synthetic(child)
+    elif isinstance(value, list):
+        for child in value:
+            reject_synthetic(child)
+
+
 def identifier(value: str) -> str:
     if not SAFE_NAME.fullmatch(value) or ".." in value:
         raise ValueError("Invalid region, version, or asset identifier")
@@ -35,6 +57,10 @@ def sha256(path: Path) -> str:
 
 def write_analysis(features: list[dict], target: Path, provenance: list[dict], *, synthetic: bool) -> dict[str, int]:
     """Retain full source coordinates/properties; the RTree only narrows candidates."""
+    if synthetic is not False:
+        raise ValueError("Synthetic analysis is not supported")
+    require_real_sources(provenance)
+    reject_synthetic(features)
     counts: dict[str, int] = {}
     with sqlite3.connect(target) as database:
         database.executescript("""
@@ -64,6 +90,10 @@ def write_analysis(features: list[dict], target: Path, provenance: list[dict], *
             lower, upper = properties.get("DRVAL1"), properties.get("DRVAL2")
             if lower is not None and upper is not None and float(lower) > float(upper):
                 raise ValueError("Depth range is reversed")
+            # Raw depths are always preserved in properties. The convenience
+            # metre columns must not mislabel unknown units, feet or fathoms.
+            if properties.get("depthUnitsCode") != 1:
+                lower, upper = None, None
             database.execute("INSERT INTO features VALUES (?,?,?,?,?,?,?,?,?,?)", (index, str(feature.get("id", f"{source_id}:{index}")), source_id, object_class, json.dumps(geometry, separators=(",", ":")), json.dumps(properties, separators=(",", ":")), lower, upper, None if properties.get("verticalDatum") is None else str(properties["verticalDatum"]), "unreviewed"))
             database.execute("INSERT INTO feature_bounds VALUES (?,?,?,?,?)", (index, west, east, south, north))
             counts[object_class] = counts.get(object_class, 0) + 1
@@ -74,6 +104,10 @@ def write_analysis(features: list[dict], target: Path, provenance: list[dict], *
 
 
 def build_pack(*, root: Path, region_id: str, version: str, features: list[dict], provenance: list[dict], bounds: list[float], valid_until: str, synthetic: bool, review: dict | None = None, attachments: dict[str, tuple[Path, str]] | None = None, create_tiles: bool = False, offline_chart: dict | None = None) -> dict:
+    if synthetic is not False:
+        raise ValueError("Synthetic packs are not supported by the production ingestion pipeline")
+    require_real_sources(provenance)
+    reject_synthetic(features)
     identifier(region_id)
     identifier(version)
     review = review or {key: False for key in REVIEW_GATES}
@@ -87,8 +121,6 @@ def build_pack(*, root: Path, region_id: str, version: str, features: list[dict]
         if not all(source.get(key) for key in ("id", "url", "retrievedAt", "attribution")):
             raise ValueError("Incomplete source provenance")
     reviewed = all(review.get(key) is True for key in REVIEW_GATES) and bool(review.get("reviewedBy")) and bool(review.get("reviewedAt"))
-    if reviewed and synthetic:
-        raise ValueError("Synthetic source packs cannot be released as reviewed")
     region = root / region_id
     region.mkdir(parents=True, exist_ok=True)
     destination = region / version
@@ -131,7 +163,7 @@ def build_pack(*, root: Path, region_id: str, version: str, features: list[dict]
         manifest = {
             "schemaVersion": 1, "regionId": region_id, "version": version,
             "createdAt": utc_now(), "validUntil": valid_until,
-            "label": "Synthetic demonstration — not for navigation" if synthetic else "Regional source snapshot",
+            "label": "Regional source snapshot",
             "synthetic": synthetic, "releaseStatus": "reviewed" if reviewed else "review-required",
             "bounds": bounds, "review": review, "provenance": provenance,
             "featureCounts": counts,
@@ -168,6 +200,10 @@ def verify_pack(directory: Path) -> dict:
     manifest = json.loads((directory / "manifest.json").read_text())
     if manifest.get("schemaVersion") != 1:
         raise ValueError("Unsupported pack version")
+    if manifest.get("synthetic") is not False:
+        raise ValueError("Synthetic packs cannot be verified, indexed or published")
+    require_real_sources(manifest.get("provenance"))
+    reject_synthetic(manifest)
     seen = set()
     for asset in manifest["assets"]:
         identifier(asset["path"])
@@ -177,6 +213,21 @@ def verify_pack(directory: Path) -> dict:
         path = directory / asset["path"]
         if path.is_symlink() or not path.is_file() or path.stat().st_size != asset["bytes"] or sha256(path) != asset["sha256"]:
             raise ValueError(f"Pack integrity failure: {asset['path']}")
+        if path.suffix in {".json", ".geojson"}:
+            content = json.loads(path.read_text())
+            reject_synthetic(content)
+            if asset["purpose"] == "assessment":
+                require_real_sources(content.get("sources"))
+                if content.get("validation", {}).get("status") not in {"unreviewed", "reviewed"}:
+                    raise ValueError("Assessment data must declare its real-source review status")
+        if asset["purpose"] == "analysis":
+            with sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True) as database:
+                metadata = dict(database.execute("SELECT key,value FROM metadata"))
+                if json.loads(metadata.get("synthetic", "null")) is not False:
+                    raise ValueError("Synthetic analysis data cannot be published")
+                require_real_sources(json.loads(metadata.get("provenance", "null")))
+                for row in database.execute("SELECT properties FROM features"):
+                    reject_synthetic(json.loads(row[0]))
     return manifest
 
 

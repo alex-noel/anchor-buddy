@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import type { RegionPack, UnitSystem } from '@anchor-buddy/domain';
 import { Button, Card, Icon, Notice } from '../components/ui';
+import Sheet from '../components/Sheet';
 import { colors as c, type as typography } from '../theme';
 import { depth, money, localTime } from '../lib/units';
 import type { MapArea } from '../lib/worldMapsCore';
@@ -22,6 +23,7 @@ export default function SavedScreen({
   onDownloadMap,
   onOpenMap,
   onResumeMap,
+  onRefreshMap,
   onDeleteMap,
   onOpenRegion,
   onDeleteRegion,
@@ -40,11 +42,17 @@ export default function SavedScreen({
   onDownloadMap: () => void;
   onOpenMap: (area: MapArea) => void;
   onResumeMap: (area: MapArea) => void;
+  onRefreshMap?: (area: MapArea) => void;
   onDeleteMap: (id: string) => void;
   onOpenRegion: (data: RegionalData) => void;
   onDeleteRegion: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [removal, setRemoval] = useState<{
+    kind: 'search' | 'map' | 'data';
+    id: string;
+    name: string;
+  } | null>(null);
   return (
     <ScrollView
       contentContainerStyle={{
@@ -93,8 +101,10 @@ export default function SavedScreen({
                   </Text>
                   <Text style={{ fontSize: 12, color: c.muted }}>{stayLabel(saved.search)}</Text>
                   <Text style={{ fontSize: 12, color: c.muted }}>
-                    {saved.results.length} results · {saved.vesselName} · Saved{' '}
-                    {localTime(saved.savedAt)}
+                    {saved.requiresReassessment
+                      ? 'Reassessment required'
+                      : `${saved.results.length} results`}{' '}
+                    · {saved.vesselName} · Saved {localTime(saved.savedAt)}
                   </Text>
                 </View>
               </View>
@@ -109,15 +119,21 @@ export default function SavedScreen({
                 >
                   {expanded === saved.id ? 'Hide snapshot' : 'View saved snapshot'}
                 </Button>
-                <Button small secondary onPress={() => onDelete(saved.id)} icon="trash-2">
+                <Button
+                  small
+                  secondary
+                  onPress={() => setRemoval({ kind: 'search', id: saved.id, name: saved.name })}
+                  icon="trash-2"
+                >
                   Delete
                 </Button>
               </View>
               {expanded === saved.id ? (
                 <View style={{ gap: 12 }}>
                   <Notice>
-                    Saved evidence from {localTime(saved.savedAt)}. These are historical results;
-                    open and reassess with the current vessel and available data before planning.
+                    {saved.requiresReassessment
+                      ? 'This older snapshot has no verified source provenance. Its result values are hidden; open and reassess to load current evidence.'
+                      : `Saved evidence from ${localTime(saved.savedAt)}. These are historical results; open and reassess with the current vessel and available data before planning.`}
                   </Notice>
                   {saved.results.map((result) => (
                     <View
@@ -175,13 +191,21 @@ export default function SavedScreen({
                   <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
                     {area.status === 'complete'
                       ? 'Complete · available offline'
-                      : 'Partial download'}{' '}
+                      : typeof area.usableZoom === 'number'
+                        ? 'Partial coverage · available offline'
+                        : 'Preparing offline coverage'}{' '}
                     · {(area.bytes / 1_000_000).toFixed(1)} MB
                   </Text>
                   <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
                     {area.completedTiles.toLocaleString()} / {area.tileCount.toLocaleString()} map
                     tiles · Detail level {area.maxZoom}
                   </Text>
+                  {area.status === 'partial' && typeof area.usableZoom === 'number' ? (
+                    <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+                      Ready through zoom {area.usableZoom} of {area.maxZoom}. Finer detail may have
+                      gaps.
+                    </Text>
+                  ) : null}
                   <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
                     Updated {localTime(area.updatedAt)}
                     {Date.parse(area.refreshAfter) < Date.now() ? ' · Refresh suggested' : ''}
@@ -194,9 +218,9 @@ export default function SavedScreen({
                 </Text>
               ) : null}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                {area.status === 'complete' ? (
+                {typeof area.usableZoom === 'number' ? (
                   <Button small onPress={() => onOpenMap(area)} icon="map">
-                    Open map
+                    {area.status === 'complete' ? 'Open map' : 'Open partial map'}
                   </Button>
                 ) : null}
                 {area.status === 'partial' ? (
@@ -204,7 +228,17 @@ export default function SavedScreen({
                     Resume download
                   </Button>
                 ) : null}
-                <Button small secondary onPress={() => onDeleteMap(area.id)} icon="trash-2">
+                {area.status === 'complete' && onRefreshMap ? (
+                  <Button small secondary onPress={() => onRefreshMap(area)} icon="refresh-cw">
+                    Download updated copy
+                  </Button>
+                ) : null}
+                <Button
+                  small
+                  secondary
+                  onPress={() => setRemoval({ kind: 'map', id: area.id, name: area.name })}
+                  icon="trash-2"
+                >
                   Delete map
                 </Button>
               </View>
@@ -275,7 +309,9 @@ export default function SavedScreen({
                   <Button
                     small
                     secondary
-                    onPress={() => onDeleteRegion(data.pack.id)}
+                    onPress={() =>
+                      setRemoval({ kind: 'data', id: data.pack.id, name: data.pack.name })
+                    }
                     icon="trash-2"
                   >
                     Delete cached data
@@ -302,9 +338,7 @@ export default function SavedScreen({
                 <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
                   {pack.validation.status === 'reviewed'
                     ? 'Reviewed regional analysis'
-                    : pack.validation.status === 'synthetic'
-                      ? 'Optional sample analysis'
-                      : 'Unreviewed regional analysis'}{' '}
+                    : 'Unreviewed regional analysis'}{' '}
                   · Saved {localTime(savedAt)}
                 </Text>
                 <Text
@@ -314,7 +348,10 @@ export default function SavedScreen({
                     color: Date.parse(pack.validUntil) < Date.now() ? c.red : c.muted,
                   }}
                 >
-                  Evidence valid until {localTime(pack.validUntil)}
+                  {Date.parse(pack.validUntil) < Date.now()
+                    ? 'Evidence expired'
+                    : 'Evidence valid until'}{' '}
+                  {localTime(pack.validUntil)}
                 </Text>
               </View>
             </View>
@@ -328,6 +365,42 @@ export default function SavedScreen({
             </View>
           </Card>
         </View>
+      ) : null}
+      {removal ? (
+        <Sheet
+          title={`Delete ${removal.kind === 'search' ? 'saved search' : removal.kind === 'map' ? 'saved map' : 'cached data'}?`}
+          subtitle={removal.name}
+          onClose={() => setRemoval(null)}
+        >
+          <Text style={{ fontSize: 13, lineHeight: 20, color: c.ink }}>
+            {removal.kind === 'search'
+              ? 'This removes the saved search and its historical results. Downloaded maps and regional evidence are kept.'
+              : removal.kind === 'map'
+                ? 'This removes the downloaded basemap from this device. You will need a connection to download it again. Saved searches and regional evidence are kept.'
+                : 'This removes the cached regional evidence from this device. Saved search snapshots and downloaded basemaps are kept.'}
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Button secondary onPress={() => setRemoval(null)}>
+                Keep it
+              </Button>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button
+                icon="trash-2"
+                onPress={() => {
+                  if (removal.kind === 'search') onDelete(removal.id);
+                  else if (removal.kind === 'map') onDeleteMap(removal.id);
+                  else onDeleteRegion(removal.id);
+                  setRemoval(null);
+                }}
+              >
+                Delete{' '}
+                {removal.kind === 'search' ? 'search' : removal.kind === 'map' ? 'map' : 'data'}
+              </Button>
+            </View>
+          </View>
+        </Sheet>
       ) : null}
     </ScrollView>
   );

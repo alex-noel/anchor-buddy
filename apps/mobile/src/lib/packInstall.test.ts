@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createDemoPack } from '@anchor-buddy/domain';
+import { createDemoPack } from '@anchor-buddy/domain/testing';
 import {
   installPack,
   validateManifest,
@@ -14,6 +14,10 @@ const hash = async (bytes: Uint8Array) => createHash('sha256').update(bytes).dig
 function fixture() {
   const pack = createDemoPack();
   pack.version = 'fixture-v1';
+  pack.validation.status = 'reviewed';
+  pack.validation.reviewedBy = 'Unit-test fixture only';
+  pack.validation.reviewedAt = pack.generatedAt;
+  pack.sources = pack.sources.map((source) => ({ ...source, synthetic: false }));
   const bytes = new TextEncoder().encode(JSON.stringify(pack));
   const manifest: Manifest = {
     schemaVersion: 1,
@@ -22,8 +26,17 @@ function fixture() {
     createdAt: pack.generatedAt,
     validUntil: pack.validUntil,
     bounds: pack.bounds,
-    synthetic: true,
-    releaseStatus: 'demo-only',
+    synthetic: false,
+    releaseStatus: 'reviewed',
+    review: {
+      maritime: true,
+      coverage: true,
+      geometry: true,
+      stationMappings: true,
+      onWaterValidation: true,
+      reviewedBy: 'Test reviewer',
+      reviewedAt: pack.generatedAt,
+    },
     assets: [
       {
         path: 'assessment.json',
@@ -87,9 +100,46 @@ test('corrupt downloads leave the active pack unchanged and clean staging', asyn
   assert.equal(committed, false);
   assert.equal(rolledBack, true);
 });
+
+test('reviewed manifests cannot install checksum-valid mixed or unspecified synthetic sources', async () => {
+  for (const poison of ['mixed', 'missing', 'synthetic-pack'] as const) {
+    const { pack, manifest } = fixture();
+    if (poison === 'mixed')
+      pack.sources.push({ ...pack.sources[0]!, id: 'unused-poison-source', synthetic: true });
+    else if (poison === 'missing') delete pack.sources[0]!.synthetic;
+    else pack.validation.status = 'synthetic';
+    const bytes = new TextEncoder().encode(JSON.stringify(pack));
+    manifest.assets[0]!.bytes = bytes.byteLength;
+    manifest.assets[0]!.sha256 = await hash(bytes);
+    let staged = false,
+      committed = false,
+      rolledBack = false;
+    await assert.rejects(
+      installPack(
+        manifest,
+        ioFor(bytes, {
+          stage: async () => {
+            staged = true;
+          },
+          commit: async () => {
+            committed = true;
+          },
+          rollback: async () => {
+            rolledBack = true;
+          },
+        }),
+      ),
+      /synthetic|provenance/i,
+    );
+    assert.equal(staged, false, poison);
+    assert.equal(committed, false, poison);
+    assert.equal(rolledBack, true, poison);
+  }
+});
+
 test('review-required live data cannot be installed as assessed data', async () => {
   const { manifest } = fixture();
-  manifest.synthetic = false;
+  manifest.releaseStatus = 'review-required';
   let fetched = false;
   await assert.rejects(
     () =>
@@ -279,4 +329,23 @@ test('provider styles cannot replace the app analysis overlays', () => {
       ),
     /analysis overlays/,
   );
+});
+
+test('synthetic manifests are rejected before any resource is downloaded', async () => {
+  const { manifest, bytes } = fixture();
+  manifest.synthetic = true;
+  let fetched = false;
+  await assert.rejects(
+    installPack(
+      manifest,
+      ioFor(bytes, {
+        fetchAsset: async () => {
+          fetched = true;
+          return bytes;
+        },
+      }),
+    ),
+    /Synthetic/,
+  );
+  assert.equal(fetched, false);
 });

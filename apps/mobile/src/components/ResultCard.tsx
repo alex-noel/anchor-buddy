@@ -9,7 +9,7 @@ export const kindNames: Record<string, string> = {
   dock: 'Public dock',
   mooring: 'Mooring buoy',
   anchorage: 'Anchorage',
-  generated: 'Suggested anchor position',
+  generated: 'Anchor position',
 };
 export const kindIcons: Record<string, IconName> = {
   marina: 'home',
@@ -37,13 +37,7 @@ export function StatusBadge({ assessment: a }: { assessment: Assessment }) {
           fontWeight: '600',
         }}
       >
-        {pass
-          ? a.simulated
-            ? 'Simulated checks pass'
-            : 'Checks pass'
-          : a.status === 'excluded'
-            ? 'Excluded'
-            : 'Needs more evidence'}
+        {pass ? 'Checks pass' : a.status === 'excluded' ? 'Excluded' : 'Needs more evidence'}
       </Text>
     </View>
   );

@@ -9,8 +9,15 @@ export const WORLD_BATHYMETRY_NOTICE =
   'GEBCO global bathymetry is coarse modelled context, not charted clearance or navigation evidence. Online only.';
 export const WORLD_MARKS_NOTICE =
   'OpenSeaMap community seamarks are incomplete display context, not verified hazard coverage. Online only.';
+export const WORLD_BEDDING_NOTICE =
+  'EMODnet European seabed substrate is broad-scale context (1:1M / 1:250k), not verified anchor holding or habitat permission. Online overview only; colours follow the provider legend.';
+export const EMODNET_BEDDING_LEGEND_URL =
+  'https://drive.emodnet-geology.eu/geoserver/gtk/wms?service=WMS&version=1.1.1&request=GetLegendGraphic&format=image/png&layer=seabed_substrate_250k';
 export const MAX_MAP_BYTES = 50_000_000;
 export const MAX_MAP_TILES = 3000;
+// Multilingual/CJK glyph blocks can exceed tile bytes for small areas. This is
+// still an estimate; enforce actual bytes and preserve partial progress at the cap.
+const ESTIMATED_MAP_LABEL_BYTES = 20_000_000;
 export const MAP_FONT = 'Noto Sans Regular';
 export const MAP_FONT_URL = 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf';
 export const MAP_TILEJSON_URL = 'https://tiles.openfreemap.org/planet';
@@ -24,6 +31,11 @@ export interface MapArea {
   bytes: number;
   tileCount: number;
   completedTiles: number;
+  /** Highest completely downloaded zoom covering this area; zero is usable. */
+  usableZoom?: number;
+  attribution?: string;
+  /** Older downloaded areas only contain glyphs for their Latin-first labels. */
+  labelPolicy?: 'local' | 'latin';
   status: 'partial' | 'complete';
   createdAt: string;
   updatedAt: string;
@@ -43,6 +55,8 @@ export interface CachedMapResource {
   sha256: string;
   bytes: number;
   kind: 'tile' | 'glyph';
+  /** Exact label ranges needed by this tile; older manifests use the global set. */
+  glyphRanges?: string[];
 }
 export interface MapAreaManifest {
   schemaVersion: 1;
@@ -125,7 +139,7 @@ export function estimateMapArea(input: { bounds: MapBounds; maxZoom?: number }) 
   if (input.maxZoom === undefined)
     while (
       maxZoom > 0 &&
-      (tileCount > MAX_MAP_TILES || tileCount * 30_000 + 2_000_000 > MAX_MAP_BYTES)
+      (tileCount > MAX_MAP_TILES || tileCount * 30_000 + ESTIMATED_MAP_LABEL_BYTES > MAX_MAP_BYTES)
     ) {
       maxZoom--;
       tileCount = mapTiles(input.bounds, maxZoom).length;
@@ -134,7 +148,7 @@ export function estimateMapArea(input: { bounds: MapBounds; maxZoom?: number }) 
     throw new Error('This area exceeds 3,000 tiles. Reduce the area or offline detail.');
   return {
     tileCount,
-    estimatedBytes: tileCount * 30_000 + 2_000_000,
+    estimatedBytes: tileCount * 30_000 + ESTIMATED_MAP_LABEL_BYTES,
     maxZoom,
     maxBytes: MAX_MAP_BYTES,
   };
@@ -165,7 +179,7 @@ export function tileGlyphRanges(bytes: Uint8Array) {
     if (!layer) continue;
     for (let index = 0; index < layer.length; index++) {
       const p = layer.feature(index).properties;
-      const text = p['name:latin'] ?? p['name:en'] ?? p.name;
+      const text = mapLabelText(p);
       if (typeof text !== 'string') continue;
       for (const character of text) {
         const code = character.codePointAt(0)!;
@@ -176,6 +190,38 @@ export function tileGlyphRanges(bytes: Uint8Array) {
     }
   }
   return result;
+}
+/** Keep glyph discovery and rendering on the same local-name-first policy. */
+export function mapLabelText(properties: Record<string, unknown>) {
+  return properties.name ?? properties['name:latin'] ?? properties['name:en'];
+}
+export function mapAreaReadiness(manifest: MapAreaManifest): MapArea {
+  let usableZoom: number | undefined;
+  const tiles = mapTiles(manifest.area.bounds, manifest.area.maxZoom);
+  for (let zoom = 0; zoom <= manifest.area.maxZoom; zoom++) {
+    if (
+      tiles.some(
+        (tile) =>
+          tile.z === zoom &&
+          (manifest.resources[tile.path]?.kind !== 'tile' ||
+            manifest.resources[tile.path]?.url !== mapTileUrl(manifest.tileTemplate, tile) ||
+            (manifest.resources[tile.path]?.glyphRanges ?? manifest.glyphRanges).some(
+              (range) => !manifest.resources[`glyphs/${range}.pbf`],
+            )),
+      )
+    )
+      break;
+    usableZoom = zoom;
+  }
+  const localNames = tiles
+    .filter((tile) => usableZoom !== undefined && tile.z <= usableZoom)
+    .every((tile) => manifest.resources[tile.path]?.glyphRanges !== undefined);
+  return {
+    ...manifest.area,
+    usableZoom,
+    attribution: WORLD_MAP_ATTRIBUTION,
+    labelPolicy: localNames ? 'local' : 'latin',
+  };
 }
 export function validateMapManifest(value: unknown): asserts value is MapAreaManifest {
   const m = value as MapAreaManifest;
@@ -200,6 +246,12 @@ export function validateMapManifest(value: unknown): asserts value is MapAreaMan
     !Number.isInteger(m.area.completedTiles) ||
     m.area.completedTiles < 0 ||
     m.area.completedTiles > m.area.tileCount ||
+    (m.area.usableZoom !== undefined &&
+      (!Number.isInteger(m.area.usableZoom) ||
+        m.area.usableZoom < 0 ||
+        m.area.usableZoom > m.area.maxZoom)) ||
+    (m.area.attribution !== undefined && m.area.attribution !== WORLD_MAP_ATTRIBUTION) ||
+    (m.area.labelPolicy !== undefined && !['local', 'latin'].includes(m.area.labelPolicy)) ||
     ![m.area.createdAt, m.area.updatedAt, m.area.refreshAfter].every(
       (date) => typeof date === 'string' && Number.isFinite(Date.parse(date)),
     ) ||
@@ -218,6 +270,9 @@ export function validateMapManifest(value: unknown): asserts value is MapAreaMan
   validateMapBounds(m.area.bounds);
   validateTileTemplate(m.tileTemplate);
   const expectedTiles = mapTiles(m.area.bounds, m.area.maxZoom);
+  const expectedPaths = new Map(
+    expectedTiles.map((tile) => [tile.path, mapTileUrl(m.tileTemplate, tile)]),
+  );
   if (expectedTiles.length !== m.area.tileCount)
     throw new Error('Saved map tile count does not match its area.');
   const resources = Object.entries(m.resources);
@@ -232,6 +287,18 @@ export function validateMapManifest(value: unknown): asserts value is MapAreaMan
         !Number.isFinite(r.bytes) ||
         r.bytes < 0 ||
         !['tile', 'glyph'].includes(r.kind) ||
+        (r.glyphRanges !== undefined &&
+          (!Array.isArray(r.glyphRanges) ||
+            r.glyphRanges.some((range) => !m.glyphRanges.includes(range)))) ||
+        (r.kind === 'tile' && expectedPaths.get(path) !== r.url) ||
+        (r.kind === 'glyph' &&
+          (!path.startsWith('glyphs/') ||
+            !m.glyphRanges.includes(path.slice(7, -4)) ||
+            r.url !==
+              MAP_FONT_URL.replace('{fontstack}', encodeURIComponent(MAP_FONT)).replace(
+                '{range}',
+                path.slice(7, -4),
+              ))) ||
         typeof r.url !== 'string' ||
         !r.url.startsWith('https://tiles.openfreemap.org/'),
     )
@@ -251,6 +318,8 @@ export function validateMapManifest(value: unknown): asserts value is MapAreaMan
       m.glyphRanges.some((range) => !m.resources[`glyphs/${range}.pbf`]))
   )
     throw new Error('Saved map is incomplete. Resume or redownload this area.');
+  if (m.area.usableZoom !== undefined && m.area.usableZoom !== mapAreaReadiness(m).usableZoom)
+    throw new Error('Saved map readiness does not match its downloaded tiles.');
 }
 export function createWorldMapCache(io: MapCacheIO) {
   let running: { id: string; controller: AbortController } | null = null;
@@ -264,8 +333,8 @@ export function createWorldMapCache(io: MapCacheIO) {
       listeners.delete(listener);
     };
   };
-  const listMapAreas = async () =>
-    (await io.list())
+  const listMapAreas = async () => {
+    const summaries = (await io.list())
       .filter(
         (area) =>
           !!area &&
@@ -276,6 +345,22 @@ export function createWorldMapCache(io: MapCacheIO) {
           ['partial', 'complete'].includes(area.status),
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const areas: MapArea[] = [];
+    for (const summary of summaries) {
+      try {
+        const manifest = await readVerifiedManifest(summary.id);
+        if (manifest) areas.push(mapAreaReadiness(manifest));
+      } catch {
+        areas.push({
+          ...summary,
+          usableZoom: undefined,
+          status: 'partial',
+          error: 'Saved map metadata is invalid. Delete and download it again.',
+        });
+      }
+    }
+    return areas;
+  };
   const readVerifiedManifest = async (id: string) => {
     if (!validMapId(id)) throw new Error('Invalid map area identifier.');
     const manifest = await io.readManifest(id);
@@ -311,10 +396,15 @@ export function createWorldMapCache(io: MapCacheIO) {
         (resource) => resource.kind === 'tile',
       ).length;
       manifest.area.updatedAt = new Date().toISOString();
-      await io.saveManifest(manifest);
-      changed();
+      manifest.area = mapAreaReadiness(manifest);
+      // A renderer checking an older published snapshot must never overwrite a
+      // running download's newer manifest. That download verifies each reuse.
+      if (running?.id !== id) {
+        await io.saveManifest(manifest);
+        changed();
+      }
     }
-    return { ...manifest.area };
+    return mapAreaReadiness(manifest);
   };
   async function downloadMapArea(
     input: MapAreaInput,
@@ -335,6 +425,7 @@ export function createWorldMapCache(io: MapCacheIO) {
     const abort = () => controller.abort();
     signal?.addEventListener('abort', abort, { once: true });
     let manifest: MapAreaManifest | null = null;
+    let publishedZoom: number | undefined;
     const report = async () => {
       if (!manifest) return;
       manifest.area.updatedAt = new Date().toISOString();
@@ -342,9 +433,16 @@ export function createWorldMapCache(io: MapCacheIO) {
       manifest.area.completedTiles = Object.values(manifest.resources).filter(
         (r) => r.kind === 'tile',
       ).length;
+      manifest.area = mapAreaReadiness(manifest);
       await io.saveManifest(manifest);
       onProgress?.({ ...manifest.area });
-      if (manifest.area.status === 'complete') changed();
+      if (
+        manifest.area.usableZoom !== publishedZoom ||
+        manifest.area.status === 'complete' ||
+        manifest.area.error
+      )
+        changed();
+      publishedZoom = manifest.area.usableZoom;
     };
     try {
       manifest = input.id ? await readVerifiedManifest(id) : null;
@@ -385,6 +483,7 @@ export function createWorldMapCache(io: MapCacheIO) {
             updatedAt: now,
             refreshAfter: new Date(Date.now() + 7 * 86400000).toISOString(),
             provider: WORLD_MAP_PROVIDER,
+            attribution: WORLD_MAP_ATTRIBUTION,
           },
         };
       }
@@ -393,13 +492,17 @@ export function createWorldMapCache(io: MapCacheIO) {
       const ranges = new Set(manifest.glyphRanges);
       const ensure = async (path: string, url: string, kind: 'tile' | 'glyph') => {
         if (controller.signal.aborted) throw new Error('Map download cancelled.');
-        const record = manifest!.resources[path];
+        let record: CachedMapResource | undefined = manifest!.resources[path];
         let bytes = record ? await io.read(id, path) : null;
         if (
           bytes &&
           (bytes.byteLength !== record!.bytes || (await io.hash(bytes)) !== record!.sha256)
         )
           bytes = null;
+        if (!bytes && record) {
+          delete manifest!.resources[path];
+          record = undefined;
+        }
         if (!bytes) {
           bytes = await io.fetch(url, controller.signal);
           const sha256 = await io.hash(bytes);
@@ -422,7 +525,9 @@ export function createWorldMapCache(io: MapCacheIO) {
         }
         if (kind === 'tile') {
           try {
-            for (const range of tileGlyphRanges(bytes)) ranges.add(range);
+            const required = [...tileGlyphRanges(bytes)];
+            for (const range of required) ranges.add(range);
+            manifest!.resources[path]!.glyphRanges = required;
           } catch (error) {
             delete manifest!.resources[path];
             throw error;
@@ -430,26 +535,42 @@ export function createWorldMapCache(io: MapCacheIO) {
         }
       };
       const tiles = mapTiles(manifest.area.bounds, manifest.area.maxZoom);
-      for (let index = 0; index < tiles.length; index += 3) {
-        const outcomes = await Promise.allSettled(
-          tiles
-            .slice(index, index + 3)
-            .map((tile) => ensure(tile.path, mapTileUrl(manifest!.tileTemplate, tile), 'tile')),
-        );
-        manifest.glyphRanges = [...ranges].sort();
+      // Finish coarse coverage first. Each level is useful immediately and stays
+      // visible while finer detail (or its local-language labels) downloads.
+      for (let zoom = 0; zoom <= manifest.area.maxZoom; zoom++) {
+        const level = tiles.filter((tile) => tile.z === zoom);
+        for (let index = 0; index < level.length; index += 3) {
+          const outcomes = await Promise.allSettled(
+            level
+              .slice(index, index + 3)
+              .map((tile) => ensure(tile.path, mapTileUrl(manifest!.tileTemplate, tile), 'tile')),
+          );
+          manifest.glyphRanges = [...ranges].sort();
+          await report();
+          const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+          if (failure?.status === 'rejected') throw failure.reason;
+        }
+        const glyphs = [...ranges];
+        for (let index = 0; index < glyphs.length; index += 3) {
+          const outcomes = await Promise.allSettled(
+            glyphs
+              .slice(index, index + 3)
+              .map((range) =>
+                ensure(
+                  `glyphs/${range}.pbf`,
+                  MAP_FONT_URL.replace('{fontstack}', encodeURIComponent(MAP_FONT)).replace(
+                    '{range}',
+                    range,
+                  ),
+                  'glyph',
+                ),
+              ),
+          );
+          const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+          if (failure?.status === 'rejected') throw failure.reason;
+        }
         await report();
-        const failure = outcomes.find((outcome) => outcome.status === 'rejected');
-        if (failure?.status === 'rejected') throw failure.reason;
       }
-      for (const range of ranges)
-        await ensure(
-          `glyphs/${range}.pbf`,
-          MAP_FONT_URL.replace('{fontstack}', encodeURIComponent(MAP_FONT)).replace(
-            '{range}',
-            range,
-          ),
-          'glyph',
-        );
       if (controller.signal.aborted) throw new Error('Map download cancelled.');
       manifest.glyphRanges = [...ranges].sort();
       manifest.area.status = 'complete';
@@ -547,8 +668,10 @@ export async function fetchBoundedMapResource(
   }
 }
 
-export function worldVectorLayers(source = 'world', prefix = 'world') {
-  const text = ['coalesce', ['get', 'name:latin'], ['get', 'name:en'], ['get', 'name']];
+export function worldVectorLayers(source = 'world', prefix = 'world', localNames = true) {
+  const text = localNames
+    ? ['coalesce', ['get', 'name'], ['get', 'name:latin'], ['get', 'name:en']]
+    : ['coalesce', ['get', 'name:latin'], ['get', 'name:en'], ['get', 'name']];
   return [
     {
       id: `${prefix}-landcover`,
@@ -637,5 +760,57 @@ export function onlineWorldMapStyle(): Record<string, unknown> {
       { id: 'world-background', type: 'background', paint: { 'background-color': '#F2F4F7' } },
       ...worldVectorLayers(),
     ],
+  };
+}
+
+/** Cached layers stay below live detail, so coarse downloads never cover newer tiles. */
+export function cachedWorldMapStyle(
+  online: boolean,
+  areas: { area: MapArea; tiles: string }[],
+  glyphs: string,
+): Record<string, unknown> | null {
+  const ready = areas
+    .filter(({ area }) => area.usableZoom !== undefined)
+    .sort(
+      (a, b) =>
+        a.area.usableZoom! - b.area.usableZoom! || a.area.updatedAt.localeCompare(b.area.updatedAt),
+    );
+  if (!online && !ready.length) return null;
+  const sources: Record<string, unknown> = {};
+  const cachedLayers: object[] = [];
+  for (const { area, tiles } of ready) {
+    // Changing only this source preserves live map sources during progressive updates.
+    const source = `saved-${area.id}-z${area.usableZoom}`;
+    sources[source] = {
+      type: 'vector',
+      tiles: [tiles],
+      minzoom: 0,
+      maxzoom: area.usableZoom,
+      bounds:
+        area.bounds[0] < area.bounds[2] ? area.bounds : [-180, area.bounds[1], 180, area.bounds[3]],
+      attribution: WORLD_MAP_ATTRIBUTION,
+    };
+    cachedLayers.push(...worldVectorLayers(source, source, area.labelPolicy !== 'latin'));
+  }
+  const live = online ? onlineWorldMapStyle() : null;
+  const renderedLayers = [...cachedLayers, ...(online ? worldVectorLayers() : [])] as {
+    type?: string;
+  }[];
+  return {
+    version: 8,
+    glyphs,
+    sources: { ...sources, ...((live?.sources as Record<string, unknown>) ?? {}) },
+    layers: [
+      { id: 'world-background', type: 'background', paint: { 'background-color': '#F2F4F7' } },
+      ...renderedLayers.filter((layer) => layer.type !== 'symbol'),
+      ...renderedLayers.filter((layer) => layer.type === 'symbol'),
+    ],
+    metadata: {
+      'anchorbuddy:cachedAreas': ready.map(({ area }) => ({
+        id: area.id,
+        usableZoom: area.usableZoom,
+        complete: area.status === 'complete',
+      })),
+    },
   };
 }

@@ -13,22 +13,28 @@ export function SelectField({
   options,
   onChange,
   help,
+  required = false,
 }: {
   label: string;
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
   help?: string;
+  required?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((option) => option.value === value);
   return (
     <View style={{ flex: 1, minWidth: 130, gap: 7 }}>
-      <Text style={s.fieldLabel}>{label}</Text>
+      <Text style={s.fieldLabel}>
+        {label}
+        {required ? ' *' : ''}
+      </Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${label}: ${selected?.label ?? 'Choose'}`}
         accessibilityState={{ expanded: open }}
+        accessibilityHint={[required ? 'Required.' : '', help ?? ''].filter(Boolean).join(' ')}
         aria-expanded={open}
         onPress={() => setOpen(!open)}
         style={{ ...s.inputWrap, minHeight: 46, gap: 12 }}

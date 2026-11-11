@@ -1,5 +1,6 @@
 import type { Place, NavigationMark, Position, SourceRecord } from '@anchor-buddy/domain';
 import type { HttpTransport } from './contracts.js';
+import { createHash } from 'node:crypto';
 import { ProviderError } from './http.js';
 import {
   coordinate,
@@ -51,11 +52,15 @@ export class OverpassProvider {
     if (!response.data || !Array.isArray(response.data.elements))
       throw new ProviderError('INVALID_RESPONSE', 'Overpass returned no element list');
     const source = sourceRecord(
-      'osm-live',
+      'osm-live-' +
+        createHash('sha256')
+          .update(response.provenance.url + response.provenance.retrievedAt)
+          .digest('hex')
+          .slice(0, 12),
       'OpenStreetMap boating features',
       response.provenance.url,
       response.provenance.retrievedAt,
-      new Date(Date.parse(response.provenance.retrievedAt) + 86400000).toISOString(),
+      response.provenance.validUntil,
       '© OpenStreetMap contributors',
       'ODbL 1.0 — https://www.openstreetmap.org/copyright',
     );
@@ -123,6 +128,10 @@ export class OverpassProvider {
         'seabed',
         'surface',
         'opening_hours',
+        'seamark:anchorage:category',
+        'seamark:harbour:category',
+        'seamark:mooring:category',
+        'seamark:anchorage:restriction',
       ])
         if (tags[key]) notes.push(`Unverified OSM ${key}: ${label(tags[key], 120)}`);
       if (tags.website || tags['contact:website'])
@@ -167,7 +176,7 @@ export class OverpassProvider {
         id: 'osm-overpass',
         name: 'OpenStreetMap boating places',
         status: truncated ? 'partial' : 'available',
-        message: `${places.length} mapped places and ${marks.length} marks. ${truncated ? 'The provider response was partial or capped. ' : ''}Community mapping is incomplete; all depths, fees, permissions and vessel limits remain unverified.`,
+        message: `${places.length} mapped places and ${marks.length} marks. ${truncated ? 'The provider response was partial or capped. ' : ''}${response.data.osm3s?.timestamp_osm_base ? 'OSM database snapshot ' + response.data.osm3s.timestamp_osm_base + '. ' : ''}Community mapping is incomplete; all depths, fees, permissions and vessel limits remain unverified.`,
         attribution: source.attribution,
         documentationUrl: 'https://dev.overpass-api.de/overpass-doc/en/preface/commons.html',
         retrievedAt: source.retrievedAt,

@@ -1,4 +1,5 @@
 import type { HttpTransport, Sourced } from './contracts.js';
+import type { JsonDiskCache } from './disk-cache.js';
 
 export class ProviderError extends Error {
   constructor(
@@ -17,6 +18,8 @@ export class GovernmentHttp implements HttpTransport {
   private readonly modified = new Map<string, string>();
   private nextRequest = 0;
   private blockedUntil = 0;
+  private cooldownStatus = 429;
+  private consecutiveFailures = 0;
   private queue: Promise<void> = Promise.resolve();
   constructor(
     private readonly options: {
@@ -32,6 +35,8 @@ export class GovernmentHttp implements HttpTransport {
       maxBytes?: number;
       respectServerExpiry?: boolean;
       postForm?: boolean;
+      diskCache?: JsonDiskCache;
+      minimumCacheSeconds?: number;
     },
   ) {}
 
@@ -46,10 +51,48 @@ export class GovernmentHttp implements HttpTransport {
       throw new ProviderError('INVALID_SOURCE', 'Provider URL is outside its allowlist');
     }
     const now = this.options.now ?? Date.now;
-    const cached = this.cache.get(url.href);
-    if (cached && Date.parse(cached.provenance.validUntil) > now()) return cached as Sourced<T>;
+    let cached = this.cache.get(url.href);
+    if (!cached && this.options.diskCache) {
+      const stored = await this.options.diskCache.read<{
+        value: Sourced<unknown>;
+        modified?: string;
+        provenanceVersion?: number;
+      }>(url.href);
+      if (
+        stored?.value?.provenance?.providerId === this.options.providerId &&
+        Number.isFinite(Date.parse(stored.value.provenance.retrievedAt)) &&
+        Number.isFinite(Date.parse(stored.value.provenance.validUntil))
+      ) {
+        if ((this.options.minimumCacheSeconds ?? 0) > 0 && stored.provenanceVersion !== 2) {
+          const requestNotBefore =
+            Date.parse(stored.value.provenance.retrievedAt) +
+            (this.options.minimumCacheSeconds ?? 0) * 1000;
+          if (requestNotBefore > now())
+            throw new ProviderError(
+              'SOURCE_EXPIRY_UNVERIFIED',
+              'Older cached forecast expiry cannot be verified; refresh is held until the provider permits another request',
+              503,
+            );
+        } else {
+          cached = stored.value;
+          this.remember(url.href, cached, stored.modified);
+        }
+      }
+    }
+    // A minimum requery interval never extends evidence expiry. Held data may be expired.
+    if (
+      cached &&
+      (Date.parse(cached.provenance.validUntil) > now() ||
+        Date.parse(cached.provenance.retrievedAt) + (this.options.minimumCacheSeconds ?? 0) * 1000 >
+          now())
+    )
+      return cached as Sourced<T>;
     if (this.blockedUntil > now())
-      throw new ProviderError('RATE_LIMITED', 'Provider requested a cooldown; retry later', 429);
+      throw new ProviderError(
+        this.cooldownStatus === 429 ? 'RATE_LIMITED' : 'UPSTREAM_UNAVAILABLE',
+        'Provider requested a cooldown; retry later',
+        this.cooldownStatus,
+      );
     const existing = this.pending.get(url.href);
     if (existing) return existing as Promise<Sourced<T>>;
     if (this.pending.size >= (this.options.maxPending ?? 8))
@@ -72,7 +115,11 @@ export class GovernmentHttp implements HttpTransport {
     await previous;
     try {
       if (this.blockedUntil > now())
-        throw new ProviderError('RATE_LIMITED', 'Provider requested a cooldown; retry later', 429);
+        throw new ProviderError(
+          this.cooldownStatus === 429 ? 'RATE_LIMITED' : 'UPSTREAM_UNAVAILABLE',
+          'Provider requested a cooldown; retry later',
+          this.cooldownStatus,
+        );
       const delay = Math.max(0, this.nextRequest - now());
       if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
       this.nextRequest = now() + (this.options.minIntervalMs ?? 250);
@@ -93,16 +140,20 @@ export class GovernmentHttp implements HttpTransport {
       });
       const prior = this.cache.get(url.href);
       if (!response.ok && !(response.status === 304 && prior)) {
-        if (response.status === 429) {
+        if (response.status === 429 || response.status === 406 || response.status >= 500) {
           const retry = response.headers.get('retry-after') ?? '';
           const seconds = /^\d+$/.test(retry) ? Number(retry) : (Date.parse(retry) - now()) / 1000;
+          const minimum =
+            response.status === 429 ? 60 : Math.min(300, 30 * 2 ** this.consecutiveFailures++);
           this.blockedUntil =
-            now() + Math.min(3600, Math.max(60, Number.isFinite(seconds) ? seconds : 60)) * 1000;
+            now() +
+            Math.min(3600, Math.max(minimum, Number.isFinite(seconds) ? seconds : minimum)) * 1000;
+          this.cooldownStatus = response.status === 429 ? 429 : 503;
         }
         await response.body?.cancel();
         throw new ProviderError(
           response.status === 429 ? 'RATE_LIMITED' : 'UPSTREAM_UNAVAILABLE',
-          'Public data provider request failed',
+          `Public data provider returned HTTP ${response.status}`,
           response.status,
         );
       }
@@ -140,14 +191,21 @@ export class GovernmentHttp implements HttpTransport {
           ...(response.headers.get('etag') ? { etag: response.headers.get('etag')! } : {}),
         },
       };
-      if (response.headers.get('last-modified'))
-        this.modified.set(url.href, response.headers.get('last-modified')!);
-      if (this.cache.size >= 128) {
-        const oldest = this.cache.keys().next().value!;
-        this.cache.delete(oldest);
-        this.modified.delete(oldest);
+      this.consecutiveFailures = 0;
+      const modified = response.headers.get('last-modified') ?? this.modified.get(url.href);
+      if (ttl > 0) {
+        this.remember(url.href, result, modified);
+        await this.options.diskCache
+          ?.write(url.href, {
+            value: result,
+            provenanceVersion: 2,
+            ...(modified ? { modified } : {}),
+          })
+          .catch(() => undefined);
+      } else {
+        this.cache.delete(url.href);
+        this.modified.delete(url.href);
       }
-      this.cache.set(url.href, result);
       return result;
     } catch (error) {
       if (error instanceof ProviderError) throw error;
@@ -158,6 +216,15 @@ export class GovernmentHttp implements HttpTransport {
     } finally {
       release();
     }
+  }
+  private remember(url: string, value: Sourced<unknown>, modified?: string) {
+    if (this.cache.size >= 128 && !this.cache.has(url)) {
+      const oldest = this.cache.keys().next().value!;
+      this.cache.delete(oldest);
+      this.modified.delete(oldest);
+    }
+    this.cache.set(url, value);
+    if (modified) this.modified.set(url, modified);
   }
 }
 

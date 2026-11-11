@@ -19,6 +19,7 @@ export default function SeabedSelect({
         accessibilityRole="checkbox"
         accessibilityLabel="All seabeds — no preference"
         accessibilityState={{ checked: value.length === 0 }}
+        aria-checked={value.length === 0}
         onPress={() => onChange([])}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 }}
       >

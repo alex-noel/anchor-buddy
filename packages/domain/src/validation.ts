@@ -321,6 +321,22 @@ function validGeometry(value: unknown): boolean {
   );
 }
 
+/** Production boundary: reject fixtures and ambiguous/mixed source provenance. */
+export function validateLiveRegionPack(value: unknown): string[] {
+  const errors = validateRegionPack(value);
+  if (!record(value)) return errors;
+  if (record(value.validation) && value.validation.status === 'synthetic')
+    errors.push('Synthetic region packs are test fixtures and cannot be used as live data.');
+  if (
+    Array.isArray(value.sources) &&
+    value.sources.some((source) => !record(source) || source.synthetic !== false)
+  )
+    errors.push(
+      'Every live source must explicitly declare synthetic: false; mixed or unspecified provenance is not accepted.',
+    );
+  return errors;
+}
+
 export function validateRegionPack(value: unknown): string[] {
   if (!record(value)) return ['Region pack must be an object.'];
   const errors: string[] = [];

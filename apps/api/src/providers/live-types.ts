@@ -1,10 +1,17 @@
-import type { Position, RegionPack, SourceRecord, WeatherInterval } from '@anchor-buddy/domain';
+import type {
+  Position,
+  RegionPack,
+  SourceRecord,
+  WeatherInterval,
+  MapContext,
+} from '@anchor-buddy/domain';
 
 export const PROJECT_USER_AGENT = 'AnchorBuddy/0.1 (https://github.com/alex-noel/anchor-buddy)';
 export interface DiscoverRequest {
   center: Position;
   radiusNm: number;
   name?: string;
+  timezone?: string;
   from?: string;
   until?: string;
 }
@@ -20,6 +27,7 @@ export interface ProviderStatus {
   license?: string;
 }
 export interface DiscoveryResult {
+  mapContext?: MapContext;
   pack: RegionPack;
   providers: ProviderStatus[];
   notices: string[];

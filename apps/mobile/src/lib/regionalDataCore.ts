@@ -1,4 +1,10 @@
-import { validateRegionPack, type Position, type RegionPack } from '@anchor-buddy/domain';
+import {
+  validateLiveRegionPack,
+  isMapContext,
+  type MapContext,
+  type Position,
+  type RegionPack,
+} from '@anchor-buddy/domain';
 
 export interface LiveProviderStatus {
   id: string;
@@ -17,6 +23,7 @@ export interface RegionalData {
   notices: string[];
   partial: boolean;
   savedAt?: string;
+  mapContext?: MapContext;
 }
 
 export function providerBase(address: string) {
@@ -91,7 +98,7 @@ export function readRegionalData(value: unknown): RegionalData {
   if (!value || typeof value !== 'object')
     throw new Error('The data service returned an invalid region.');
   const data = value as RegionalData;
-  const errors = validateRegionPack(data.pack);
+  const errors = validateLiveRegionPack(data.pack);
   if (errors.length || data.pack.validation.status === 'synthetic')
     throw new Error(
       'Live region validation failed: ' + (errors[0] ?? 'synthetic data is not a live response.'),
@@ -115,6 +122,8 @@ export function readRegionalData(value: unknown): RegionalData {
     typeof data.partial !== 'boolean'
   )
     throw new Error('The data service returned invalid coverage information.');
+  if (data.mapContext !== undefined && !isMapContext(data.mapContext))
+    throw new Error('The data service returned invalid scientific map context.');
   return data;
 }
 

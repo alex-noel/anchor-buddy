@@ -1,10 +1,11 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import type { RegionPack } from '@anchor-buddy/domain';
 import Sheet from './Sheet';
 import { Check, Notice } from './ui';
 import { colors as c } from '../theme';
 import type { MapLayers } from '../lib/workspace';
+import { WORLD_BEDDING_NOTICE, EMODNET_BEDDING_LEGEND_URL } from '../lib/worldMapsCore';
 export default function MapLayersSheet({
   layers,
   onChange,
@@ -44,6 +45,15 @@ export default function MapLayersSheet({
           Select multiple preferred seabeds in search settings or Advanced filters. Areas without
           source evidence remain unknown.
         </Text>
+        <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>{WORLD_BEDDING_NOTICE}</Text>
+        <Pressable
+          accessibilityRole="link"
+          onPress={() => void Linking.openURL(EMODNET_BEDDING_LEGEND_URL)}
+        >
+          <Text style={{ fontSize: 12, color: c.blue, paddingVertical: 6 }}>
+            View EMODnet substrate colour legend ↗
+          </Text>
+        </Pressable>
       </View>
       <View style={{ gap: 5 }}>
         <Check
@@ -57,16 +67,15 @@ export default function MapLayersSheet({
         </Text>
       </View>
       <Text style={{ fontSize: 12, color: c.muted, lineHeight: 20 }}>
-        Hazards and the selected position’s full swing footprint remain visible. Shaded edges are
-        source-data boundaries, not marina boundaries or a navigation route.
+        Available hazards remain visible. A swing footprint appears only when its geometry can be
+        established. Shaded edges are source-data boundaries, not marina boundaries or a navigation
+        route.
       </Text>
-      <Notice>
-        {pack.validation.status === 'synthetic'
-          ? 'Current map overlays use artificial sample polygons and marks, including rectangular source extents. They are not real nautical chart data.'
-          : pack.validation.notice}
-      </Notice>
+      <Notice>{pack.validation.notice}</Notice>
       <Text style={{ fontSize: 12, lineHeight: 20, color: c.muted }}>
-        Sources: {pack.sources.map((source) => source.name).join(', ')}. Version {pack.version}.
+        {pack.sources.length
+          ? `Assessment sources: ${pack.sources.map((source) => source.name).join(', ')}. Version ${pack.version}.`
+          : 'No regional assessment sources are loaded. Display-map attribution appears on the map.'}
       </Text>
     </Sheet>
   );

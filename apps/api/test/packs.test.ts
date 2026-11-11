@@ -21,7 +21,15 @@ async function fixture() {
     synthetic: false,
     releaseStatus: 'review-required',
     bounds: [-82, 24, -80, 26],
-    provenance: [],
+    provenance: [
+      {
+        id: 'test-only',
+        url: 'https://fixture.example/source',
+        retrievedAt: '2026-10-30T00:00:00Z',
+        attribution: 'Isolated test fixture',
+        synthetic: false,
+      },
+    ],
     review: {
       maritime: false,
       coverage: false,
@@ -35,7 +43,7 @@ async function fixture() {
         sha256: createHash('sha256').update(content).digest('hex'),
         bytes: content.length,
         mediaType: 'application/json',
-        purpose: 'assessment',
+        purpose: 'display',
       },
     ],
   };
@@ -44,7 +52,7 @@ async function fixture() {
     writeFile(join(directory, 'assessment.json'), content),
     writeFile(join(root, 'keys', 'current.json'), '{"version":"v1"}'),
   ]);
-  return { root, directory, store: new FilePackStore(root) };
+  return { root, directory, manifest, store: new FilePackStore(root) };
 }
 
 test('pack store returns immutable checked assets and rejects tampering', async (t) => {
@@ -57,6 +65,40 @@ test('pack store returns immutable checked assets and rejects tampering', async 
   );
   await writeFile(join(directory, 'assessment.json'), '{"test":fals}');
   await assert.rejects(store.asset('keys', 'v1', 'assessment.json'), /checksum|size/);
+});
+
+test('synthetic manifests, mixed provenance and synthetic assessment attachments are never listed or served', async (t) => {
+  const { root, directory, manifest, store } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const variant of [
+    { ...manifest, synthetic: true },
+    {
+      ...manifest,
+      provenance: [...manifest.provenance, { ...manifest.provenance[0], synthetic: true }],
+    },
+    { ...manifest, provenance: [{ id: 'missing-classification' }] },
+  ]) {
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(variant));
+    assert.deepEqual(await store.regions(), []);
+    await assert.rejects(store.manifest('keys'), /real sources/);
+    await assert.rejects(store.asset('keys', 'v1', 'assessment.json'), /real sources/);
+  }
+  const body = Buffer.from(
+    JSON.stringify({
+      validation: { status: 'reviewed' },
+      sources: [{ synthetic: false }, { synthetic: true }],
+    }),
+  );
+  manifest.assets[0] = {
+    ...manifest.assets[0]!,
+    purpose: 'assessment',
+    bytes: body.length,
+    sha256: createHash('sha256').update(body).digest('hex'),
+  };
+  await writeFile(join(directory, 'assessment.json'), body);
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest));
+  assert.deepEqual(await store.regions(), []);
+  await assert.rejects(store.manifest('keys'), /real-source/);
 });
 
 test('unreviewed real data cannot become live assessment and paths cannot escape root', async (t) => {

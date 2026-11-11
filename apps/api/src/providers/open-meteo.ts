@@ -63,7 +63,7 @@ export class OpenMeteoMarineProvider {
       'Open-Meteo marine wave forecast',
       response.provenance.url,
       response.provenance.retrievedAt,
-      new Date(Date.parse(response.provenance.retrievedAt) + 3600000).toISOString(),
+      response.provenance.validUntil,
       'Open-Meteo and originating meteorological model providers',
       'CC BY 4.0; hosted free API is non-commercial only — https://open-meteo.com/en/terms',
     );
