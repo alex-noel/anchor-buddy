@@ -14,7 +14,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:ingest": "PYTHONPATH=workers/ingest python3 -m unittest discover -s workers/ingest/tests -v",
-    "check:runtime": "node --test scripts/runtime-guard.test.mjs && node scripts/check-runtime.mjs",
+    "check:runtime": "node --test scripts/runtime-guard.test.mjs scripts/ci/scan.test.mjs && node scripts/check-runtime.mjs",
     "check": "npm run check:runtime && npm run typecheck && npm test && npm run test:ingest"
   },
   "devDependencies": {
