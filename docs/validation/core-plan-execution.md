@@ -19,8 +19,8 @@ The contract author is worker A; the integrator independently reviews that chang
 | Task | State | Evidence / gate |
 | --- | --- | --- |
 | FOUNDATION-01 | done | Baseline `fe29e076b937efab4a96b8db38cd5e7283b6c41d`; [237-test reproduction](baseline-2026-11-12.md). |
-| FOUNDATION-02 | in_progress | Worker A isolated contract worktree; downstream schema edits blocked until review/merge. |
-| OPS-04 | in_progress | Worker D owns dependency/verification tranche; native/E2E CI completion awaits proven later inputs. |
+| FOUNDATION-02 | done | Independent review and integrated 250-test check passed; [approved contract](../contracts/v2.md), worker revision `28b15c8`. |
+| OPS-04 | implemented_awaiting_external_evidence | Reviewed dependency/verification tranche merged from `0dd1cc6`; [evidence](ops-04.md). Native/E2E/hosted completion remains pending. |
 | APP-01 | planned | Read-only preflight complete; implementation waits for FOUNDATION-02 merge. |
 | DATA-01 | planned | Official-source preflight complete; implementation waits for FOUNDATION-02 merge. |
 | WATCH-01/02 | planned | Native source/toolchain issues recorded; actual SDKs/signing/device evidence remain separate gates. |

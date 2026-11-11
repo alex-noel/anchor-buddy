@@ -4,7 +4,7 @@ Task / title: FOUNDATION-02 — Freeze versioned evidence, persistence and integ
 
 Baseline / prerequisites: FOUNDATION-01 `fe29e076b937efab4a96b8db38cd5e7283b6c41d`. Final change SHA: the scoped commit introducing this report (also supplied in the worker handoff).
 
-Task status: **in_review**. Engineering implementation and required checks pass; the integrator's final interface/ownership approval is pending. This is not a maritime review or capability release.
+Task status: **done**. The independent integrator approved the interface/ownership contract on 11 November 2026 after reviewing worker commit `28b15c8ea487db92cc16ab4a23c42c1f4ab256ad` and running the integrated checks at `b9c5261bcc5814781a5467cd455e9a6d593f6e2d` (250 tests passed). This is not a maritime review or capability release.
 
 ## Implemented behavior and ownership
 
@@ -26,7 +26,7 @@ Contract revision: `docs/contracts/v2.md`. Root integrator independently reviewe
 | FOUNDATION-02-AC04 | PASS    | F02-T03 rejects point/scientific/display context as analytical coverage; component-kind/layer mismatch and full-stay freshness/review bounds reject                                           | DATA-03 supplies actual spatial/source checks and reviewed components                                   |
 | FOUNDATION-02-AC05 | PASS    | F02-T04 recomputed byte hash mismatch, old binding after content update, expired/future review; own-key hash regression                                                                       | Actual byte-size/hash I/O and all release approvals remain DATA-03/API integration duties               |
 | FOUNDATION-02-AC06 | PASS    | F02-T06 plus existing domain/API/runtime tests; all assessment regression outcomes retained; no fixture exported                                                                              | None within foundation scope                                                                            |
-| FOUNDATION-02-AC07 | NOT_RUN | Named sole owners documented; plan builder checks complete and acyclic graph                                                                                                                  | Integrator final independent owner/interface signoff is pending; do not report task done until recorded |
+| FOUNDATION-02-AC07 | PASS | Independent integrator approved owner/interface table, reviewed final validation gates and reproduced 250 integrated tests; plan graph remains valid | Downstream amendments remain integrator-controlled |
 
 ## Test cases and reproducible evidence
 
