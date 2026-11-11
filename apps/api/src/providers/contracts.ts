@@ -1,4 +1,6 @@
-/** Public provider metadata contains capabilities, never credentials. */
+import type { EvidenceEnvelope, EvidenceRole } from '@anchor-buddy/domain';
+
+/** Legacy provider metadata retained for existing /v1/providers clients. */
 export interface ProviderDescriptor {
   id: string;
   name: string;
@@ -32,6 +34,65 @@ export interface Sourced<T> {
 
 export interface HttpTransport {
   json<T>(url: string): Promise<Sourced<T>>;
+}
+
+export const PROVIDER_CAPABILITY_SCHEMA_VERSION = 2 as const;
+export type ProviderCapabilityRole =
+  EvidenceRole | 'place-context' | 'warning-context' | 'tariff-estimate' | 'assistant';
+export type ProviderRoutingExtent =
+  | 'global'
+  | 'europe-context'
+  | 'europe-extract'
+  | 'northwestern-europe'
+  | 'us-nws'
+  | 'reviewed-local'
+  | 'not-applicable';
+export type ProviderActivation =
+  'default' | 'overpass-global' | 'overpass-europe' | 'open-meteo' | 'review-required' | 'pending';
+export type ProviderCapabilityStatus =
+  'available' | 'partial' | 'unavailable' | 'disabled' | 'not-covered';
+
+export interface ProviderProductDescriptor {
+  providerId: string;
+  /** Stable product identity across deployments. */
+  productId: string;
+  name: string;
+  implementation: 'implemented' | 'pending';
+  activation: ProviderActivation;
+  role: ProviderCapabilityRole;
+  geography: { routingExtent: ProviderRoutingExtent; description: string };
+  authentication: ProviderDescriptor['authentication'];
+  sourceUrl: string;
+  policy: { urls: readonly string[]; lastVerifiedAt: string | null; conditions: string };
+  attribution: string;
+  refresh: {
+    minRequerySeconds: number | null;
+    fallbackCacheSeconds: number | null;
+    conditions: string;
+  };
+  rights: EvidenceEnvelope['rights'];
+}
+
+export interface PublicProviderProduct extends Omit<
+  ProviderProductDescriptor,
+  'activation' | 'authentication'
+> {
+  authentication: {
+    mode: ProviderDescriptor['authentication'];
+    credential?: 'configured' | 'missing';
+  };
+  status: ProviderCapabilityStatus;
+  statusBasis: 'configuration' | 'routing' | 'response';
+  /** A routing decision does not establish positive spatial evidence. */
+  routing: 'eligible' | 'outside' | 'unchecked' | 'requires-review' | 'not-selected';
+}
+
+export interface ProviderCapabilityReport {
+  providers: readonly ProviderDescriptor[];
+  capabilities: {
+    schemaVersion: typeof PROVIDER_CAPABILITY_SCHEMA_VERSION;
+    products: PublicProviderProduct[];
+  };
 }
 
 export const PROVIDERS: readonly ProviderDescriptor[] = [
@@ -80,9 +141,9 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     attribution: 'EMODnet Bathymetry and Geology, European Union and referenced originators',
     documentationUrl: 'https://emodnet.ec.europa.eu/en/emodnet-web-service-documentation',
     offline: {
-      allowed: true,
+      allowed: false,
       conditions:
-        'Preserve signed model values, source datum, classification scale, vintage and originator terms. Context is never an assessment depth/holding/coverage layer.',
+        'Verify product and originator terms before redistribution. Preserve signed values, datum, scale and vintage. Scientific context supplies no assessment coverage.',
     },
     freshnessSeconds: 86400,
   },
@@ -97,9 +158,9 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     attribution: '© OpenStreetMap contributors, ODbL 1.0',
     documentationUrl: 'https://dev.overpass-api.de/overpass-doc/en/preface/commons.html',
     offline: {
-      allowed: true,
+      allowed: false,
       conditions:
-        'Retain ODbL attribution and comply with database share-alike requirements. Production needs an explicitly configured service, with app-wide quotas and caching.',
+        'OSM reuse is subject to ODbL. Review selected endpoint terms for storage, attribution and share-alike requirements.',
     },
     freshnessSeconds: 86400,
   },
@@ -131,7 +192,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     attribution: 'Open-Meteo and model providers, CC BY 4.0',
     documentationUrl: 'https://open-meteo.com/en/terms',
     offline: {
-      allowed: true,
+      allowed: false,
       conditions:
         'Data CC BY 4.0 with model attribution; hosted-service use depends on deployment license. Coastal model tides/currents are not used for clearance.',
     },
@@ -147,7 +208,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     attribution: 'NOAA Office of Coast Survey',
     documentationUrl: 'https://charts.noaa.gov/ENCs/ENCs.shtml',
     offline: {
-      allowed: true,
+      allowed: false,
       conditions:
         'Retain NOAA notices, source edition, update sequence, datum and attribution; derived products are not certified navigation charts.',
     },
@@ -194,7 +255,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     attribution: 'Individual source records',
     documentationUrl: 'https://floridakeys.noaa.gov/',
     offline: {
-      allowed: true,
+      allowed: false,
       conditions: 'Only factual records with permitted reuse; keep verification and expiry dates.',
     },
     freshnessSeconds: null,
@@ -209,7 +270,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     attribution: 'Individual operator source records',
     documentationUrl: 'https://floridakeys.noaa.gov/',
     offline: {
-      allowed: true,
+      allowed: false,
       conditions: 'Factual itemized estimates with source currency and validity periods.',
     },
     freshnessSeconds: null,
@@ -224,8 +285,24 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     attribution: 'NOAA and pack-specific attribution',
     documentationUrl: 'https://maplibre.org/',
     offline: {
+      allowed: false,
+      conditions: 'Pack-specific rights required. Display tiles supply no clearance evidence.',
+    },
+    freshnessSeconds: null,
+  },
+  {
+    id: 'openfreemap',
+    name: 'OpenFreeMap global vector basemap',
+    kind: 'chart-display',
+    status: 'implemented',
+    authentication: 'none',
+    coverage: 'Worldwide basemap display; does not describe reviewed chart coverage',
+    attribution: 'OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors',
+    documentationUrl: 'https://openfreemap.org/',
+    offline: {
       allowed: true,
-      conditions: 'Display layer only; never use tile geometry for clearance calculations.',
+      conditions:
+        'User-selected areas only. App limits each area to 3,000 tiles and 50 MB with at most four parallel requests and an identifying User-Agent.',
     },
     freshnessSeconds: null,
   },
