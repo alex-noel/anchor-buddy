@@ -20,8 +20,15 @@ const runtimeMarkers = [
   'Simulation only. This environment cannot monitor or sound a native alarm.',
 ];
 const testModules =
-  /(?:packages\/domain\/src\/testing\.[a-z]+|(?:@anchor-buddy\/domain)\/src\/testing\.[a-z]+|(?:modules\/anchor-watch|@anchor-buddy\/anchor-watch)\/src\/testing\/)/;
+  /(?:(?:packages|@anchor-buddy)\/domain\/src\/testing\.[a-z]+|(?:modules|@anchor-buddy)\/anchor-watch\/src\/testing\/)/;
 const results = { credentials: 0, runtime: 0, maps: 0, bundles: 0 };
+
+function sourcePaths(map) {
+  if (map?.version !== 3) throw new Error('Invalid bundle source map');
+  if (Array.isArray(map.sections)) return map.sections.flatMap(({ map }) => sourcePaths(map));
+  if (!Array.isArray(map.sources)) throw new Error('Invalid bundle source map');
+  return map.sources.map((source) => join(map.sourceRoot ?? '', source).replaceAll('\\', '/'));
+}
 
 function scan(file) {
   const name = basename(file);
@@ -35,12 +42,10 @@ function scan(file) {
   if (kind === 'source') return;
   const extension = extname(file);
   if (extension === '.map') {
-    const map = JSON.parse(contents);
-    if (!Array.isArray(map.sources)) throw new Error('Invalid bundle source map');
+    const sources = sourcePaths(JSON.parse(contents));
+    if (!sources.length) throw new Error('Empty bundle source map');
     results.maps++;
-    if (map.sources.some((source) => testModules.test(source.replaceAll('\\', '/')))) {
-      results.runtime++;
-    }
+    if (sources.some((source) => testModules.test(source))) results.runtime++;
   }
   if ((kind === 'hermes' ? ['.hbc'] : ['.js', '.mjs']).includes(extension)) results.bundles++;
   if (runtimeMarkers.some((marker) => contents.includes(marker))) results.runtime++;

@@ -51,9 +51,26 @@ test('bundle scanner requires readable source maps and rejects embedded test mod
   scan(dir, ['web', '.'], 1, /could not read the expected input/);
   writeFileSync(map, '{' + canary);
   scan(dir, ['web', '.'], 1, /could not read the expected input/);
-  writeFileSync(map, JSON.stringify({ sources: ['packages/domain/src/testing.ts'] }));
+  writeFileSync(map, JSON.stringify({ version: 3, sources: ['packages/domain/src/testing.ts'] }));
   scan(dir, ['web', '.'], 1, /1 test-runtime findings/);
-  writeFileSync(map, JSON.stringify({ sources: ['apps/mobile/src/App.tsx'] }));
+  writeFileSync(
+    map,
+    JSON.stringify({
+      version: 3,
+      sections: [
+        {
+          offset: { line: 0, column: 0 },
+          map: {
+            version: 3,
+            sourceRoot: '/modules/anchor-watch/src',
+            sources: ['testing/kernel.ts'],
+          },
+        },
+      ],
+    }),
+  );
+  scan(dir, ['web', '.'], 1, /1 test-runtime findings/);
+  writeFileSync(map, JSON.stringify({ version: 3, sources: ['apps/mobile/src/App.tsx'] }));
   writeFileSync(bundle, `console.log('${canary}');`);
   scan(dir, ['web', '.'], 1, /1 credential or private-file findings/);
   writeFileSync(bundle, 'console.log("public bundle");');
