@@ -10,6 +10,7 @@ import {
 } from '../src/providers/capabilities.js';
 import { PROVIDERS, type ProviderCapabilityReport } from '../src/providers/contracts.js';
 import { EmodnetContextProvider } from '../src/providers/emodnet-context.js';
+import { OpenMeteoMarineProvider } from '../src/providers/open-meteo.js';
 
 const split: ProviderCapabilityArea = { center: [16.44, 43.51], radiusNm: 2 };
 const singapore: ProviderCapabilityArea = { center: [103.86, 1.28], radiusNm: 3 };
@@ -216,6 +217,60 @@ test('optional deployment mode, licensed host and credential gates are independe
   );
   assert.equal(product(production, 'osm-overpass-europe').status, 'disabled');
   assert.equal(product(production, 'met-locationforecast-wind').status, 'available');
+});
+
+test('a custom noncommercial wave endpoint can respond without inheriting hosted rights', async () => {
+  const endpoint = 'https://marine.example.test/v1/marine';
+  const calls: string[] = [];
+  const retrievedAt = '2026-11-11T12:00:00Z';
+  const adapter = new OpenMeteoMarineProvider(
+    {
+      async json<T>(url: string) {
+        calls.push(url);
+        return {
+          data: {
+            hourly: {
+              time: [Date.parse(retrievedAt) / 1000],
+              wave_height: [1],
+              swell_wave_height: [0.5],
+            },
+            hourly_units: { wave_height: 'm', swell_wave_height: 'm' },
+          } as T,
+          provenance: {
+            providerId: 'fixture',
+            url: endpoint,
+            retrievedAt,
+            validUntil: '2026-11-11T13:00:00Z',
+          },
+        };
+      },
+    },
+    { mode: 'noncommercial', endpoint },
+  );
+  const observation = await adapter.forecast(split);
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0]!).hostname, new URL(endpoint).hostname);
+  assert.equal(observation.status.status, 'partial');
+
+  const custom = capabilityDeploymentFromEnvironment({
+    OPEN_METEO_MODE: 'noncommercial',
+    OPEN_METEO_MARINE_URL: endpoint,
+  });
+  const id = 'open-meteo-marine-waves';
+  const configured = product(resolveProviderCapabilities(custom, split), id);
+  assert.equal(configured.status, 'available');
+  assert.equal(configured.statusBasis, 'configuration');
+  const report = resolveProviderCapabilities(custom, split, { [id]: observation.status.status });
+  const observed = product(report, id);
+  assert.equal(observed.status, 'partial');
+  assert.equal(observed.statusBasis, 'response');
+  for (const right of Object.values(observed.rights)) assert.equal(right.status, 'unknown');
+  assert.equal(JSON.stringify(report).includes(endpoint), false);
+
+  const official = capabilityDeploymentFromEnvironment({ OPEN_METEO_MODE: 'noncommercial' });
+  const hosted = product(resolveProviderCapabilities(official, split), id);
+  assert.equal(hosted.status, 'available');
+  assert.equal(hosted.rights.offlineStorage.status, 'permitted');
 });
 
 test('provider area parser matches discovery coordinate and radius semantics', () => {

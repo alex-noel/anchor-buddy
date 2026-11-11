@@ -522,7 +522,7 @@ export interface ProviderDeployment {
   overpassEurope: boolean;
   nominatimPublic: boolean;
   openMeteoMode: WaveMode;
-  openMeteoEndpointEligible: boolean;
+  openMeteoEndpoint: 'ineligible' | 'official-free' | 'eligible';
   openMeteoCredential: Presence;
 }
 
@@ -565,16 +565,15 @@ export function capabilityDeploymentFromEnvironment(
   const openMeteoMode = member(['noncommercial', 'commercial', 'self-hosted'], mode)
     ? mode
     : 'disabled';
+  const freeMarineHost = 'marine-api.open-meteo.com';
   const defaultMarineHost =
-    openMeteoMode === 'commercial'
-      ? 'customer-marine-api.open-meteo.com'
-      : 'marine-api.open-meteo.com';
-  let openMeteoEndpointEligible = false;
+    openMeteoMode === 'commercial' ? 'customer-marine-api.open-meteo.com' : freeMarineHost;
+  let openMeteoEndpoint: ProviderDeployment['openMeteoEndpoint'] = 'ineligible';
   try {
     const marineUrl = new URL(
       env.OPEN_METEO_MARINE_URL ?? 'https://' + defaultMarineHost + '/v1/marine',
     );
-    openMeteoEndpointEligible =
+    const endpointEligible =
       marineUrl.protocol === 'https:' &&
       !marineUrl.username &&
       !marineUrl.password &&
@@ -584,7 +583,16 @@ export function capabilityDeploymentFromEnvironment(
         ? marineUrl.hostname === defaultMarineHost
         : openMeteoMode === 'self-hosted'
           ? !marineUrl.hostname.endsWith('open-meteo.com')
-          : openMeteoMode === 'noncommercial' && marineUrl.hostname === defaultMarineHost);
+          : openMeteoMode === 'noncommercial');
+    if (endpointEligible) {
+      openMeteoEndpoint =
+        openMeteoMode === 'noncommercial' &&
+        marineUrl.hostname === freeMarineHost &&
+        !marineUrl.port &&
+        marineUrl.pathname === '/v1/marine'
+          ? 'official-free'
+          : 'eligible';
+    }
   } catch {
     // Malformed endpoint never enables a capability.
   }
@@ -593,7 +601,7 @@ export function capabilityDeploymentFromEnvironment(
     overpassEurope: !!env.OVERPASS_EUROPE_URL || (!production && !env.OVERPASS_URL),
     nominatimPublic: !env.NOMINATIM_URL,
     openMeteoMode,
-    openMeteoEndpointEligible,
+    openMeteoEndpoint,
     openMeteoCredential: env.OPEN_METEO_API_KEY ? 'configured' : 'missing',
   };
 }
@@ -634,7 +642,7 @@ function enabled(product: ProviderProductDescriptor, deployment: ProviderDeploym
     case 'open-meteo':
       return (
         deployment.openMeteoMode !== 'disabled' &&
-        deployment.openMeteoEndpointEligible &&
+        deployment.openMeteoEndpoint !== 'ineligible' &&
         (deployment.openMeteoMode !== 'commercial' ||
           deployment.openMeteoCredential === 'configured')
       );
@@ -671,7 +679,7 @@ function publicRights(
   if (
     descriptor.providerId === 'open-meteo-marine' &&
     status !== 'disabled' &&
-    deployment.openMeteoMode === 'noncommercial'
+    deployment.openMeteoEndpoint === 'official-free'
   )
     source = rights(openMeteoPolicy, openMeteoPolicy, openMeteoPolicy);
   // Credential and entitlement records are private. Project precisely the public contract fields.
