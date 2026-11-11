@@ -2,7 +2,7 @@
 
 Baseline: `ed48e6508538b8ccbb24fd24c0e2e5b4e74063b7` (approved FOUNDATION-02). Additional reviewed prerequisite: root contract correction `e658dadc495d857687984dd2687afb1c417f1b8e`, independently approved by this worker and cherry-picked as `98a5c74`. Final implementation SHA is supplied in the scoped commit handoff.
 
-Task status: **implemented_awaiting_external_evidence**. Mathematical implementation, controlled tests and target compilation are complete. Qualified review of numerical/geometry assumptions is unavailable. Primitive-bearing assessments therefore cannot claim clearance or pass; an independently observed intersection still excludes. No synthetic/test switch bypasses this rule.
+Task status: **implemented_awaiting_external_evidence**. Mathematical implementation, controlled tests, TypeScript checks and Hermes exports are complete; native applications were not compiled. Qualified review of numerical/geometry assumptions is unavailable. Primitive-bearing assessments therefore cannot claim clearance or pass; an independently observed intersection still excludes. No synthetic/test switch bypasses this rule.
 
 ## Behavior and ownership
 
@@ -146,3 +146,7 @@ Privacy/secret review: only invented analytical points, reserved test source lab
 Rollback: revert SAFE-01 implementation and restore the prior primitive rejection gate before any downstream primitive activation. Existing legacy pack behavior remains unchanged. The root-owned documentation/type-comment gate descriptions need the recorded amendment; no further central API/App wiring is required.
 
 Independent root-amendment review: `e658dad` was inspected with `git show`; string-only enums reject array/object coercion and preserve valid strings, review-start/end checks match the frozen whole-interval contract, callback/lookup behavior remains fail-closed. **Approved, no findings**; source unchanged by this worker apart from the authorized primitive validator gate amendment.
+
+## Integrated review
+
+Integrated SAFE-01 as `e19b991` from worker commit `4930be54`. Independent worker D (GPT-6 Astra, high reasoning for numerical review) approved both the geometry implementation and final ±85° bounds correction, rerunning all 88 domain tests. The integrator updated the old primitive-gate descriptions in `docs/contracts/v2.md` and the RegionPack type comment; worker A independently approved those updates. The combined candidate `1e518051a0f6d14748500a22fea1cf751e447354` passed 284 tests and all typechecks/exports. Engineering reviews do not satisfy the missing qualified model or maritime attestation. The model-review insufficiency gate remains unconditional.

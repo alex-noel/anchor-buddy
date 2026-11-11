@@ -1,31 +1,40 @@
 # APP-01 validation handoff
 
-- Baseline/prerequisites: `ed48e6508538b8ccbb24fd24c0e2e5b4e74063b7` (FOUNDATION-01/02 merged). Final change SHA: see containing commit.
-- Status: `in_review`, not done. Integrator owns App.tsx after merge. No contract or schema amendment.
-- Changed: `apps/mobile/src/App.tsx`, `apps/mobile/src/lib/{workspaceController.ts,useWorkspaceController.ts,workspaceController.test.ts,workspaceController.md}`, this report. Reserved files only.
-- Outcome: reducer holds active search, draft including saved restore payload, selection, navigation and exclusive sheet identity; selections retain candidate/allowance instead of Assessment. Request generation guards completion; live discovery never changes the durable active-region pointer; only explicit save/install/remove actions do. Existing source and native effects remain in shell; controller cleanup only aborts fetches.
+Prerequisites: `ed48e6508538b8ccbb24fd24c0e2e5b4e74063b7` (FOUNDATION-01/02 approved). Worker candidate `b02054edbcf0e2c26818eb70683dec541f76112a`; integrated runtime candidate `1e518051a0f6d14748500a22fea1cf751e447354`.
 
-| AC | Status | Evidence / remaining action |
-| --- | --- | --- |
-| APP-01-AC01 | NOT_RUN | Transition table written; complete reachable-state and illegal-transition audit still required. Generic field setter remains available. |
-| APP-01-AC02 | NOT_RUN | Core state and generation moved; shell still contains source effect and several field updates. Integrator must review whether delegation meets criterion. |
-| APP-01-AC03 | PASS | Reducer test `cancel saved search draft...` checks active search, pin, filters, area name and timezone plus discarded restore payload. |
-| APP-01-AC04 | NOT_RUN | Controlled helper tests cover delayed cache completion after a newer generation and cancellation/unmount; mounted discovery and restart still require integration exercise. Live discovery has no pointer write to race. |
-| APP-01-AC05 | NOT_RUN | A native bridge spy exercised the production status observer, reducer transitions, background invalidation and controller request cleanup: only subscribe/getStatus/unsubscribe occurred. Mounted shell/bridge sequence remains to be exercised. |
-| APP-01-AC06 | NOT_RUN | Browser/native walkthrough not performed; integrator to run QA journey. |
-| APP-01-AC07 | PASS | Eleven controller tests exercise draft cancellation/reopen, setup child return, profile invalidation, details/plan, and request/cache races. |
-| APP-01-AC08 | NOT_RUN | Contract now names preview, back, view and evidence transitions and maps every public action to behavioral tests. Independent integrator audit pending. |
+Status: **done** for this controller extraction. The integrator owns App.tsx after merge. This status does not certify native monitoring, complete QA-01, or implement APP-02 durable settings. No persisted schema or native protocol changed.
 
-| Test | Status and evidence | Remaining action |
-| --- | --- | --- |
-| T01 | PASS: controller test uses active A and draft B; active fields deep-equal after cancel. | Full UI walkthrough desirable. |
-| T02 | NOT_RUN: helper test completes A cache after B, checks B remains current and simulated restart reads the explicit saved pointer; discovery-level deferred responses have not been exercised. | Run mounted adapter/integration deferred-fetch test. |
-| T03 | NOT_RUN: monitoring native bridge spy exercises production observer plus reducer search close/change/reopen, modal, profile, background invalidation and request cleanup; observes only subscribe/getStatus/unsubscribe. Mounted shell with bridge spy remains untested. | Exercise mounted shell with monitoring bridge spy. |
-| T04 | NOT_RUN: pure modal test checks setup/profile child return; fresh-store onboarding journey not run. | Run browser/native journey. |
-| T05 | NOT_RUN: existing assessment and workspace tests pass; requested map/list/filter/manual-pin journey not run. | Run journey and compare counts/detail. |
-| T06 | NOT_RUN: production request-cancel helper suppresses deferred cache completion and observer disposal suppresses a late status read; mounted source fetch/close/unmount not exercised. | Run mounted integration test. |
-| T07 | NOT_RUN: action contract now maps each public action to a behavioral test. | Independent integrator audit of action coverage and wiring. |
+The reducer owns active search, isolated draft/restore metadata, selection, preview, navigation and exclusive sheets. Detail identity contains candidate/allowance rather than an assessment. Source loading, persistence and assessment remain explicit shell effects; the request generation and abort lifecycle are controller-owned. The production status observer can only read and subscribe. Its disposal cannot issue watch commands.
 
-Checks on this change: `npm ci` (Node 24.22.3) passed; `npm run typecheck --workspace=@anchor-buddy/mobile` passed; `npm run test --workspace=@anchor-buddy/mobile` passed (91 tests); `npm run export:web --workspace=@anchor-buddy/mobile` passed. Command output kept in local `/tmp/anchor-app01-*.log`; source tests are the reproducible artifact. Export is a web bundle, not a native build. A synthetic native bridge spy exercised production observer and controller lifecycle boundaries; no live source, complete mounted browser journey, native build or physical device tests were run by this worker. No credentials, personal data, source evidence or native protocol changes were added. Rollback: revert the scoped commit; no migration was introduced.
+## Acceptance
 
-Integrator-approved behavior change: live discovery caches regional evidence and updates the current in-memory workspace, but no longer automatically writes the durable active-region pointer. The last explicitly saved/installed pointer remains after restart. An already-started cache write may finish after cancellation; its completion cannot activate the workspace. Existing settings writes are unchanged and APP-02 owns their durability.
+| AC          | Status | Evidence                                                                                                                                                                                                                                                                 |
+| ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| APP-01-AC01 | PASS   | Transition contract covers all 17 public actions; independently enumerated against reducer, call sites and tests. Cancel/close mismatches are documented no-ops. Setup child return and preview transitions were exercised in the browser.                               |
+| APP-01-AC02 | PASS   | Independent call-site review found one controller owner for active search, draft and pin. Shell effects receive the committed search/area tuple. Map/list share derived results; manual pin stays separate.                                                              |
+| APP-01-AC03 | PASS   | Saved-draft reducer regression preserves search, filters, pin, area and timezone. Browser changed radius/seabeds and cancelled: original 1 nm, 12 marinas and manual pin remained.                                                                                       |
+| APP-01-AC04 | PASS   | Deferred-generation/cache tests cover cancellation/disposal and older completion. Mounted exported UI held real HTTP200 responses: B then A left B unchanged; closing before releasing a response left Explore empty.                                                    |
+| APP-01-AC05 | PASS   | Production observer with real createWatchBridge and a monitoring spy recorded only subscribe/getStatus/unsubscribe through controller lifecycle; independent shell call-graph review found no arm/stop/radius calls. Native implementation behavior remains WATCH-owned. |
+| APP-01-AC06 | PASS   | Integrator browser journey covered fresh onboarding/child cancel, invalid input recovery, tour, real search, map/list/filter/sort, source detail, pin/plan, save/close/reopen, cached preview and truthful unsupported web watch.                                        |
+| APP-01-AC07 | PASS   | Eleven new behavioral controller tests; mobile suite 91/91, plus independent review and mounted boundary exercises.                                                                                                                                                      |
+| APP-01-AC08 | PASS   | Adjacent contract documents typed action payloads, legal origins, no-ops, ownership, effect boundaries and action-to-test mapping. Independent reviewer enumerated all public actions using it.                                                                          |
+
+## Test cases and limits
+
+| Test | Result | Scope                                                                                                                                                                                                                                 |
+| ---- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T01  | PASS   | Controlled expired saved draft cancellation; mounted ordinary draft cancellation also verified.                                                                                                                                       |
+| T02  | PASS   | Deferred tests plus mounted real-response A/B reversal. B used a 0.5 nm search; late A was the previous 1 nm search. B text remained byte-identical after A was released. Live discovery has no durable active-region write.          |
+| T03  | PASS   | Monitoring bridge spy, production status observer and controller transitions, supplemented by independent mounted-shell call-site inspection. A full mounted native shell/bridge test and device trial were not run.                  |
+| T04  | PASS   | Fresh isolated browser profile, required boat/default completion, cancelled child returns to setup, invalid depth corrected, tour and empty Explore.                                                                                  |
+| T05  | PASS   | Real Split results: 12 marinas in both views; manual pin excluded from that count and retained after view changes; detail reopens and plan keeps unknown footprint unknown.                                                           |
+| T06  | PASS   | Mounted search closed before actual HTTP200 release: no resurrection/loading/results. Disposal and late cache/status completion tested through production lifecycle adapters; full browser React-unmount instrumentation was not run. |
+| T07  | PASS   | Integrator and independent worker reviewed all 17 public actions and corresponding behavioral cases.                                                                                                                                  |
+
+Independent review by worker A approved `b02054e`, rerunning mobile 91/91 and typecheck. The integrator's clean combined candidate passed 284 tests, all workspace typechecks, web export and both Hermes exports. Exact commands, browser observations and remaining gates are in [wave validation](core-wave-01-2026-11-11.md).
+
+The browser walkthrough first used the APP candidate, then repeated preview/reload and real saved-search reopening on the integrated export. The narrow smoke viewport was actually 500 × 844 CSS pixels (the browser enforced a 500 px minimum); no 390 px or full mobile-device claim is made. Source responses were real; response delay instrumentation existed only inside the isolated test browser and was removed by reloading. It never replaced evidence or calculated outcomes.
+
+Integrator-approved behavior correction: live discovery caches regional evidence and updates memory, but no longer writes the durable active-region pointer automatically. Only explicit save/install/remove actions change that pointer. An already-started cache write may finish after cancellation but cannot activate the workspace. APP-02 still owns durable settings writes.
+
+Rollback: revert the APP-01 integration and its follow-up formatting/contract clarification; no storage migration was introduced.

@@ -4,34 +4,44 @@ Started 11 November 2026 on `codex/core-plan-2026-11-11`. The user's execution i
 
 ## Roles and review
 
-| Role | Model / reasoning | Initial scope |
-| --- | --- | --- |
-| A — contracts and safety | GPT-6 Astra / high | FOUNDATION-02, then bounded assessment tasks |
-| B — application | GPT-6.1 Terra / high | APP-01 controller, then durable controls |
-| C — data and source verification | GPT-6.1 Sol / high | Independent baseline review, then DATA-01 and ingestion |
-| D — operations and native | GPT-6.1 Sol / medium initially | Dependency/toolchain audit and OPS-04; increase reasoning for native algorithm work |
-| Integrator / reviewer | Parent session | FOUNDATION-01, file leases, independent review, integration and regression evidence |
+| Role                             | Model / reasoning                                                                | Initial scope                                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| A — contracts and safety         | GPT-6 Astra / high                                                               | FOUNDATION-02, then bounded assessment tasks                                        |
+| B — application                  | GPT-6.1 Terra / high                                                             | APP-01 controller, then durable controls                                            |
+| C — data and source verification | GPT-6.1 Sol / high                                                               | Independent baseline review, then DATA-01 and ingestion                             |
+| D — operations and native        | GPT-6.1 Sol / medium for OPS; GPT-6 Astra / high for independent geometry review | Dependency/toolchain audit and OPS-04; independent SAFE-01 numerical review         |
+| Integrator / reviewer            | Parent session                                                                   | FOUNDATION-01, file leases, independent review, integration and regression evidence |
 
 The contract author is worker A; the integrator independently reviews that change. No worker self-approval substitutes for integration review, and engineering review is never a maritime attestation. Models/reasoning may change for subsequent bounded assignments; record the actual setting rather than assuming every task needs the most expensive model.
 
 ## Current task state
 
-| Task | State | Evidence / gate |
-| --- | --- | --- |
-| FOUNDATION-01 | done | Baseline `fe29e076b937efab4a96b8db38cd5e7283b6c41d`; [237-test reproduction](baseline-2026-11-12.md). |
-| FOUNDATION-02 | done | Independent review and integrated 250-test check passed; [approved contract](../contracts/v2.md), worker revision `28b15c8`. |
-| OPS-04 | implemented_awaiting_external_evidence | Reviewed dependency/verification tranche merged from `0dd1cc6`; [evidence](ops-04.md). Native/E2E/hosted completion remains pending. |
-| APP-01 | planned | Read-only preflight complete; implementation waits for FOUNDATION-02 merge. |
-| DATA-01 | planned | Official-source preflight complete; implementation waits for FOUNDATION-02 merge. |
-| WATCH-01/02 | planned | Native source/toolchain issues recorded; actual SDKs/signing/device evidence remain separate gates. |
-| Remaining tasks | planned | Dispatch only after their engineering dependencies are reviewed and merged. |
+| Task            | State                                  | Evidence / gate                                                                                                                                                    |
+| --------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| FOUNDATION-01   | done                                   | Baseline `fe29e076b937efab4a96b8db38cd5e7283b6c41d`; [237-test reproduction](baseline-2026-11-12.md).                                                              |
+| FOUNDATION-02   | done                                   | Independent review and integrated 250-test check passed; [approved contract](../contracts/v2.md), worker revision `28b15c8`.                                       |
+| OPS-04          | implemented_awaiting_external_evidence | Reviewed dependency/verification tranche merged from `0dd1cc6`; [evidence](ops-04.md). Native/E2E/hosted completion remains pending.                               |
+| APP-01          | done                                   | Controller candidate `b02054e` independently approved and merged; [AC and browser evidence](app-01.md).                                                            |
+| DATA-01         | done                                   | Registry and HTTP route integrated; custom-endpoint review correction `2839f94` approved. [Evidence](data-01.md).                                                  |
+| SAFE-01         | implemented_awaiting_external_evidence | Candidate `4930be54` integrated as `e19b991`; geometry review and 210 PROJ references pass. Genuine model/maritime approval remains gated. [Evidence](safe-01.md). |
+| WATCH-01/02     | planned                                | Native source/toolchain issues recorded; actual SDKs/signing/device evidence remain separate gates.                                                                |
+| Remaining tasks | planned                                | Dispatch only after their engineering dependencies are reviewed and merged.                                                                                        |
 
-## Active reservations
+## Integration checkpoint and next reservations
 
-- Worker A: domain shared types/validators/exports, additive contract helpers/tests, `docs/contracts/v2.md` and its validation report. No assessment algorithm, screens or native protocol changes.
-- Worker D: root lockfile/package manifests, verification scripts/CI configuration and OPS-04 report. No cloud action, remote CI trigger or native algorithm change in this tranche.
-- Integrator: execution/baseline reports and branch integration. Application/data workers remain read-only until released with the merged schema SHA.
-- Every implementation role uses its own branch/worktree. No shared `node_modules` symlink or evolving source-directory copy is used as a reproducibility shortcut.
+Clean combined runtime candidate **`1e518051a0f6d14748500a22fea1cf751e447354`** passed **284 tests**, all typechecks, web export and iOS/Android Hermes exports. All four local verification records identify that SHA with `dirty: false`. See [wave validation](core-wave-01-2026-11-11.md) for the actual browser journey, delayed-response tests and limits. This checkpoint completes the first dependency wave, not the two-week backlog.
+
+Worker implementation leases for this wave are closed. The integrator owns App.tsx, server wiring and validation reports. No background worker is still executing the next wave. Each subsequent assignment must begin from the integrated candidate and receive an explicit file lease.
+
+| Next bounded assignment                                | Role / suggested model and reasoning                       | Dependency status                                                                                   |
+| ------------------------------------------------------ | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| APP-02 durable local saves                             | B / GPT-6.1 Terra high                                     | FOUNDATION-01/02 and APP-01 approved. Keep shell wiring integrator-owned.                           |
+| DATA-02 real ENC extraction                            | C / GPT-6.1 Sol high                                       | FOUNDATION-01/02 and DATA-01 approved; SAFE-01 primitive contract available with model-review gate. |
+| SAFE-02 equipment guidance references                  | A / GPT-6 Astra high                                       | FOUNDATION-02 approved; no invented ratings or approval.                                            |
+| WATCH-01/02 native integration, one platform at a time | D / GPT-6.1 Sol high, numerical review escalated as needed | FOUNDATION-01/02 approved. Compiler/signing/device availability must be recorded truthfully.        |
+| QA-01 repeatable browser suite                         | Rotate D after bounded native/toolchain work               | FOUNDATION-01 and APP-01 approved; observed browser journey is documented.                          |
+
+These are ready assignments, not started or completed tasks. The runtime still limits concurrency to three active workers plus the integrator; rotate the fourth logical role. Models above are suggestions for the next assignment, not a claim that they have run.
 
 ## Scope and external gates
 
