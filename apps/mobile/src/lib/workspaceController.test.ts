@@ -317,3 +317,63 @@ test('request cancellation and observer teardown suppress late completions', asy
   await reading;
   assert.deepEqual(updates, []);
 });
+
+test('open and close preview clear old search context and preserve area metadata', () => {
+  const active = reduce(initialWorkspace, {
+    type: 'commitSearch',
+    search,
+    area: { regionName: 'Old', timezone: 'UTC' },
+    pin: [10, 50],
+  });
+  const preview = reduce(active, {
+    type: 'openPreview',
+    area: { center: [11, 51], radiusNm: 4 },
+    name: 'New',
+    timezone: 'Europe/Warsaw',
+  });
+  assert.equal(preview.activeSearch, null);
+  assert.equal(preview.customPin, null);
+  assert.deepEqual(preview.previewArea, { center: [11, 51], radiusNm: 4 });
+  assert.equal(preview.activeAreaName, 'New');
+  assert.equal(preview.activeAreaTimezone, 'Europe/Warsaw');
+  assert.equal(preview.mapPreview, true);
+  assert.equal(preview.tab, 'explore');
+  assert.equal(preview.view, 'map');
+  const closed = reduce(preview, { type: 'closePreview' });
+  assert.equal(closed.mapPreview, false);
+  assert.equal(closed.previewArea, null);
+  assert.equal(closed.activeAreaName, undefined);
+  assert.equal(closed.activeAreaTimezone, undefined);
+  assert.equal(reduce(closed, { type: 'closePreview' }), closed);
+});
+
+test('closing details, changing tab, planning, watch and search closure clear detail search', () => {
+  const candidate = {
+    id: 'pin',
+    name: 'Pin',
+    kind: 'generated' as const,
+    position: [10, 50] as [number, number],
+  };
+  const plan = { instance: 1, candidate, allowance: 0 as const, search };
+  const detail = reduce(reduce(initialWorkspace, { type: 'commitSearch', search }), {
+    type: 'openDetails',
+    selection: { candidate, allowance: 0 },
+    search,
+  });
+  for (const action of [
+    { type: 'closeDetails' } as const,
+    { type: 'changeTab', tab: 'saved' } as const,
+    { type: 'openPlan', plan } as const,
+    { type: 'showWatch' } as const,
+    { type: 'closeSearch' } as const,
+    { type: 'invalidateEvidence' } as const,
+  ])
+    assert.equal(reduce(detail, action).detailSearch, null, action.type);
+  const closed = reduce(detail, { type: 'closeDetails' });
+  assert.equal(reduce(closed, { type: 'closeDetails' }), closed);
+  const planned = reduce(detail, { type: 'openPlan', plan });
+  const watch = reduce(planned, { type: 'showWatch' });
+  assert.equal(reduce(watch, { type: 'back' }).flow, 'plan');
+  assert.equal(reduce(planned, { type: 'back' }).flow, 'base');
+  assert.equal(reduce(detail, { type: 'changeView', view: 'list' }).view, 'list');
+});

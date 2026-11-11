@@ -16,11 +16,19 @@
 | Details | `openPlan(plan)` | Close details and enter plan with candidate, search and allowance. |
 | Any | `showWatch(setup?)` | Show watch route, optionally with an unconfirmed suggestion. Existing native session is independent. |
 | Any profile commit | `commitProfile` | Clear plan and watch suggestions; return from plan to base. Native status/session is unchanged. |
-| Saved map/region | Shell opens preview by clearing search and setting preview area, map view and Explore tab. No discovery or watch command is implied. |
+| Any / saved map or region | `openPreview(area, name?, timezone?)` | Clear prior search and selection, set preview area and metadata, select Explore map. Caller cancels outstanding discovery first. |
+| Preview without active search | `closePreview` | Clear preview and metadata; outside preview it is a no-op. |
+| Any | `changeView(view)` | Select map or list without modifying active search or watch. |
+| Plan or watch | `back` | Return watch to plan when a plan exists, otherwise return to base. |
+| Evidence removed | `invalidateEvidence` | Clear detail, plan and watch suggestion, return to base; do not touch native watch. |
 | Setup | `openModal(profile/defaults)` | Child modal records `parent: setup`; closing returns to setup. |
 | Any modal | `openModal(name)` / `closeModal(name)` | One modal at a time. Opening replaces the current modal, except setup child records its parent. Closing a non-current modal is a no-op. Modal names: setup, profile, defaults, search, advanced, layers, download, data, detail, save and tour. Setup display additionally waits for a known non-active, non-problem native watch status. |
 
-`set(key, value)` is an internal, key-correlated field update adapter for existing shell callbacks (filters, preview, view and intermediate form transitions). It does not persist and is not part of the public `WorkspaceAction` union. Public `dispatch` accepts the named actions above. `state` exposes the values; `modal(name, open)` wraps modal actions. Effects must not treat a selection or plan suggestion as a confirmed anchor.
+`set(key, value)` is an internal, key-correlated field update adapter for existing shell callbacks (filters, selection and intermediate form transitions). It does not persist and is not part of the public `WorkspaceAction` union. Public `dispatch` accepts the named actions above. `state` exposes the values; `modal(name, open)` wraps modal actions. Effects must not treat a selection or plan suggestion as a confirmed anchor.
+
+## Action test coverage
+
+The `workspaceController.test.ts` tests exercise every public action: `openModal`/`closeModal` through setup child and bridge scenarios; `changeTab`, `openDetails`, `closeDetails`, `openPlan`, `showWatch`, `back`, `invalidateEvidence`, and `changeView` through detail/plan and detail-context cases; `beginSearch`, `cancelSearch`, `commitSearch`, `closeSearch` through draft, reopen and bridge cases; `commitProfile` through plan invalidation and bridge cases; and `openPreview`/`closePreview` through the preview case. Named actions are in the exported `WorkspaceAction` union with typed payloads. `closeDetails`, `cancelSearch`, `closePreview` and closing a non-current modal have no-op cases. Reducer tests do not replace the mounted user journey.
 
 ## Request and effect ownership
 

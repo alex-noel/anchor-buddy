@@ -96,20 +96,11 @@ function AnchorApp() {
   const { state: workspace, set: setWorkspace, modal: setModal, dispatch, dataRequest, generation, mounted, cancelDataRequest } = controller;
   const { activeSearch, activeAreaName, activeAreaTimezone, searchDraft, searchDraftArea, tab, flow, previewArea, mapPreview, view, filters, selectedId, detail, detailSearch, customPin, choosingPin, plan, watchSetup } = workspace;
   const setActiveSearch = (v: typeof activeSearch) => setWorkspace('activeSearch', v);
-  const setActiveAreaName = (v: typeof activeAreaName) => setWorkspace('activeAreaName', v);
-  const setActiveAreaTimezone = (v: typeof activeAreaTimezone) => setWorkspace('activeAreaTimezone', v);
-  const setTab = (v: typeof tab) => setWorkspace('tab', v);
-  const setFlow = (v: typeof flow) => setWorkspace('flow', v);
-  const setPreviewArea = (v: typeof previewArea) => setWorkspace('previewArea', v);
-  const setMapPreview = (v: typeof mapPreview) => setWorkspace('mapPreview', v);
-  const setView = (v: typeof view) => setWorkspace('view', v);
   const setFilters = (v: typeof filters) => setWorkspace('filters', v);
   const setSelectedId = (v: typeof selectedId) => setWorkspace('selectedId', v);
   const closeDetails = () => dispatch({ type: 'closeDetails' });
   const setCustomPin = (v: typeof customPin) => setWorkspace('customPin', v);
   const setChoosingPin = (v: typeof choosingPin) => setWorkspace('choosingPin', v);
-  const setPlan = (v: typeof plan) => setWorkspace('plan', v);
-  const setWatchSetup = (v: typeof watchSetup) => setWorkspace('watchSetup', v);
   const isModal = (name: import('./lib/workspaceController').ModalName) => workspace.modal?.name === name;
   const dataOpen = isModal('data'); const setDataOpen = (v: boolean) => setModal('data', v);
   const profileOpen = isModal('profile'); const setProfileOpen = (v: boolean) => setModal('profile', v);
@@ -552,7 +543,7 @@ function AnchorApp() {
     cancelDataRequest();
     setDataLoading(false);
     setDataError('');
-    dispatch({ type: 'closeSearch' });
+    dispatch({ type: mapPreview && !activeSearch ? 'closePreview' : 'closeSearch' });
   };
   const downloadCurrentArea = () =>
     setDownloadSelection({
@@ -568,13 +559,11 @@ function AnchorApp() {
     radiusNm: Math.min(50, (area.bounds[3] - area.bounds[1]) * 30),
   });
   const openCachedMap = (area: MapArea) => {
-    closeSearch();
+    cancelDataRequest();
+    setDataLoading(false);
+    setDataError('');
     const selection = areaSelection(area);
-    setPreviewArea(selection);
-    setActiveAreaName(area.name);
-    setMapPreview(true);
-    setView('map');
-    setTab('explore');
+    dispatch({ type: 'openPreview', area: selection, name: area.name });
     const cached = regionCache.find((row) =>
       regionContains(row.pack, selection.center, selection.radiusNm),
     );
@@ -589,22 +578,16 @@ function AnchorApp() {
     }
   };
   const openCachedRegion = (data: RegionalData) => {
-    closeSearch();
+    cancelDataRequest();
+    setDataLoading(false);
+    setDataError('');
     setPack(data.pack);
-    setActiveAreaName(data.pack.name);
-    setActiveAreaTimezone(data.pack.timezone);
     setRegionData(data);
     setSavedAt(data.savedAt ?? null);
-    setPreviewArea({
-      center: [
-        (data.pack.bounds[0] + data.pack.bounds[2]) / 2,
-        (data.pack.bounds[1] + data.pack.bounds[3]) / 2,
-      ],
+    dispatch({ type: 'openPreview', name: data.pack.name, timezone: data.pack.timezone, area: {
+      center: [(data.pack.bounds[0] + data.pack.bounds[2]) / 2, (data.pack.bounds[1] + data.pack.bounds[3]) / 2],
       radiusNm: Math.min(50, (data.pack.bounds[3] - data.pack.bounds[1]) * 30),
-    });
-    setMapPreview(true);
-    setView('map');
-    setTab('explore');
+    } });
     setAssessedAt(new Date().toISOString());
   };
   const removeCachedRegion = (id: string) =>
@@ -630,10 +613,7 @@ function AnchorApp() {
             activeSearch?.maxDistanceNm ?? previewArea?.radiusNm ?? 3,
           ),
         );
-        closeDetails();
-        setPlan(null);
-        setWatchSetup(undefined);
-        setFlow('base');
+        dispatch({ type: 'invalidateEvidence' });
         setDataError(
           'Cached evidence removed. Refresh Sources & coverage to download this area again.',
         );
@@ -751,8 +731,7 @@ function AnchorApp() {
       (pack.id === snapshot.packId ? pack : undefined);
     const prepared = prepareSavedSearch(snapshot.search);
     if (prepared.needsDateReview) {
-      setTab('explore');
-      setFlow('base');
+      dispatch({ type: 'changeTab', tab: 'explore' });
       dispatch({ type: 'beginSearch', draft: prepared.search, area: { confirmed: true, name: savedRegion?.name, timezone: savedRegion?.timezone }, restore: { filters: snapshot.filters, pin: snapshot.selectedPosition } });
       setMessage('This saved stay has ended. Review the proposed new dates before searching.');
       return;
@@ -860,7 +839,7 @@ function AnchorApp() {
         <View style={s.flowBar}>
           <Pressable
             accessibilityRole="button"
-            onPress={() => setFlow(flow === 'watch' && plan ? 'plan' : 'base')}
+            onPress={() => dispatch({ type: 'back' })}
             style={s.back}
           >
             <Icon name="arrow-left" size={17} />
@@ -950,19 +929,13 @@ function AnchorApp() {
           onDeleteRegion={removeCachedRegion}
           onDelete={deleteSaved}
           onMap={() => {
-            closeSearch();
-            setPreviewArea({
-              center: [
-                (pack.bounds[0] + pack.bounds[2]) / 2,
-                (pack.bounds[1] + pack.bounds[3]) / 2,
-              ],
+            cancelDataRequest();
+            setDataLoading(false);
+            setDataError('');
+            dispatch({ type: 'openPreview', name: pack.name, timezone: pack.timezone, area: {
+              center: [(pack.bounds[0] + pack.bounds[2]) / 2, (pack.bounds[1] + pack.bounds[3]) / 2],
               radiusNm: Math.min(50, (pack.bounds[3] - pack.bounds[1]) * 30),
-            });
-            setActiveAreaName(pack.name);
-            setActiveAreaTimezone(pack.timezone);
-            setMapPreview(true);
-            setTab('explore');
-            setView('map');
+            } });
           }}
           onSettings={() => changeTab('settings')}
           onSearch={() => {
@@ -1084,7 +1057,7 @@ function AnchorApp() {
                     accessibilityLabel={mode === 'map' ? 'Map view' : 'List view'}
                     aria-pressed={view === mode}
                     disabled={mode === 'list' && !activeSearch}
-                    onPress={() => setView(mode)}
+                    onPress={() => dispatch({ type: 'changeView', view: mode })}
                     style={[
                       s.viewButton,
                       view === mode && s.viewSelected,
@@ -1333,7 +1306,7 @@ function AnchorApp() {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`Show ${assessments.length} results in list`}
-                        onPress={() => setView('list')}
+                        onPress={() => dispatch({ type: 'changeView', view: 'list' })}
                         style={s.mapCount}
                       >
                         <Text style={s.secondaryText}>

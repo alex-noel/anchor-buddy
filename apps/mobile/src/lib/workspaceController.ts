@@ -70,6 +70,11 @@ export type WorkspaceAction =
   | { type: 'openModal'; name: ModalName }
   | { type: 'closeModal'; name: ModalName }
   | { type: 'changeTab'; tab: Tab }
+  | { type: 'changeView'; view: 'map' | 'list' }
+  | { type: 'back' }
+  | { type: 'invalidateEvidence' }
+  | { type: 'openPreview'; area: PreviewArea; name?: string; timezone?: string }
+  | { type: 'closePreview' }
   | {
       type: 'beginSearch';
       draft: SearchRequest;
@@ -117,9 +122,38 @@ export function workspaceReducer(
         tab: action.tab,
         flow: 'base',
         detail: null,
+        detailSearch: null,
         choosingPin: false,
         modal: state.modal?.name === 'detail' ? null : state.modal,
       };
+    case 'changeView':
+      return { ...state, view: action.view };
+    case 'back':
+      return { ...state, flow: state.flow === 'watch' && state.plan ? 'plan' : 'base' };
+    case 'invalidateEvidence':
+      return {
+        ...state,
+        detail: null,
+        detailSearch: null,
+        plan: null,
+        watchSetup: undefined,
+        flow: 'base',
+        modal: state.modal?.name === 'detail' ? null : state.modal,
+      };
+    case 'openPreview':
+      return {
+        ...workspaceReducer(state, { type: 'closeSearch' }),
+        previewArea: action.area,
+        mapPreview: true,
+        activeAreaName: action.name,
+        activeAreaTimezone: action.timezone,
+        view: 'map',
+        tab: 'explore',
+      };
+    case 'closePreview':
+      return state.mapPreview && !state.activeSearch
+        ? workspaceReducer(state, { type: 'closeSearch' })
+        : state;
     case 'beginSearch':
       return {
         ...state,
@@ -183,6 +217,7 @@ export function workspaceReducer(
         ...state,
         plan: action.plan,
         detail: null,
+        detailSearch: null,
         modal: state.modal?.name === 'detail' ? null : state.modal,
         flow: 'plan',
       };
@@ -190,6 +225,7 @@ export function workspaceReducer(
       return {
         ...state,
         detail: null,
+        detailSearch: null,
         modal: state.modal?.name === 'detail' ? null : state.modal,
         flow: 'watch',
         watchSetup: action.setup ?? state.watchSetup,
@@ -214,6 +250,7 @@ export function workspaceReducer(
         customPin: null,
         selectedId: undefined,
         detail: null,
+        detailSearch: null,
         plan: null,
         watchSetup: undefined,
         mapPreview: false,
