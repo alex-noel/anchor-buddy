@@ -213,6 +213,8 @@ export type ContractResult<T> =
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
+const oneOf = (value: unknown, allowed: readonly string[]): value is string =>
+  typeof value === 'string' && allowed.includes(value);
 const utc = (v: unknown): v is string =>
   typeof v === 'string' &&
   /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(v) &&
@@ -264,17 +266,24 @@ export function validateEvidenceEnvelope(value: unknown): string[] {
   const version = checkSchemaVersion(value);
   if (version.status !== 'supported') errors.push(...version.errors);
   if (
-    !['chart-display', 'scientific-context', 'point-forecast', 'analytical-coverage'].includes(
-      String(value.role),
-    ) ||
+    !oneOf(value.role, [
+      'chart-display',
+      'scientific-context',
+      'point-forecast',
+      'analytical-coverage',
+    ]) ||
     !ids(value.sourceIds)
   )
     errors.push('Evidence role and source references are required.');
   if (
     !object(value.sourceTime) ||
-    !['observation', 'survey', 'model-issue', 'publication', 'unknown'].includes(
-      String(value.sourceTime.kind),
-    ) ||
+    !oneOf(value.sourceTime.kind, [
+      'observation',
+      'survey',
+      'model-issue',
+      'publication',
+      'unknown',
+    ]) ||
     !(value.sourceTime.at === null || utc(value.sourceTime.at)) ||
     (value.sourceTime.kind === 'unknown') !== (value.sourceTime.at === null)
   )
@@ -310,7 +319,7 @@ export function validateEvidenceEnvelope(value: unknown): string[] {
       const right = value.rights[key];
       if (
         !object(right) ||
-        !['permitted', 'prohibited', 'unknown'].includes(String(right.status)) ||
+        !oneOf(right.status, ['permitted', 'prohibited', 'unknown']) ||
         !(right.policyUrl === null || url(right.policyUrl)) ||
         !(right.verifiedAt === null || utc(right.verifiedAt)) ||
         !(right.entitlementId === null || text(right.entitlementId)) ||
@@ -320,7 +329,7 @@ export function validateEvidenceEnvelope(value: unknown): string[] {
     }
   if (
     !object(value.review) ||
-    !['unreviewed', 'reviewed'].includes(String(value.review.status)) ||
+    !oneOf(value.review.status, ['unreviewed', 'reviewed']) ||
     !Array.isArray(value.review.attestationIds) ||
     !value.review.attestationIds.every(text) ||
     (value.review.status === 'reviewed' && !ids(value.review.attestationIds))
@@ -359,7 +368,7 @@ export function validateHazardPrimitive(
     !text(value.name) ||
     !text(value.objectClass) ||
     !ids(value.sourceIds) ||
-    !['shore', 'obstruction', 'cable', 'channel', 'shallow', 'habitat'].includes(String(value.kind))
+    !oneOf(value.kind, ['shore', 'obstruction', 'cable', 'channel', 'shallow', 'habitat'])
   )
     errors.push('Invalid primitive geometry, identity or provenance.');
   for (const [amount, provenance] of [
@@ -407,14 +416,14 @@ export function validateSnapshotIdentity(
       !Number.isSafeInteger(component.bytes) ||
       Number(component.bytes) < 0 ||
       !ids(component.sourceIds) ||
-      ![
+      !oneOf(component.kind, [
         'static-analysis',
         'rules-habitat',
         'weather-current',
         'water-level',
         'places-tariffs',
         'display',
-      ].includes(String(component.kind))
+      ])
     ) {
       errors.push('Invalid immutable component identity.');
       continue;
@@ -505,7 +514,7 @@ export function readLocalRecord<T>(
   let errors: string[];
   if (
     v.kind !== kind ||
-    !['settings', 'saved-search', 'saved-plan'].includes(String(v.kind)) ||
+    !oneOf(v.kind, ['settings', 'saved-search', 'saved-plan']) ||
     !text(v.id) ||
     !text(v.revision) ||
     !utc(v.savedAt)
@@ -585,9 +594,15 @@ export function validateAnalyticalCoverage(
   if (
     value.schemaVersion !== 2 ||
     value.role !== 'analytical-coverage' ||
-    !['bathymetry', 'hazards', 'habitat', 'restrictions', 'weather', 'tides', 'currents'].includes(
-      String(value.layer),
-    ) ||
+    !oneOf(value.layer, [
+      'bathymetry',
+      'hazards',
+      'habitat',
+      'restrictions',
+      'weather',
+      'tides',
+      'currents',
+    ]) ||
     !safeArea(value.geometry, areaValid) ||
     !ids(value.sourceIds) ||
     !interval(value.validFrom, value.validUntil) ||
@@ -609,8 +624,9 @@ export function validateAnalyticalCoverage(
   };
   if (
     !component ||
-    !Object.hasOwn(layerKinds, String(value.layer)) ||
-    component.kind !== layerKinds[String(value.layer)]
+    !text(value.layer) ||
+    !Object.hasOwn(layerKinds, value.layer) ||
+    component.kind !== layerKinds[value.layer]
   )
     errors.push('Component kind cannot establish this analytical layer.');
   if (
@@ -634,13 +650,19 @@ export function validateAnalyticalCoverage(
   if (value.complete === true && component) {
     const e = component.evidence;
     if (
+      !utc(value.validFrom) ||
       !utc(value.validUntil) ||
       Date.parse(value.validUntil) <= Date.parse(assessedAt) ||
       !review ||
+      Date.parse(value.validFrom) < Date.parse(review.reviewedAt) ||
       Date.parse(review.validUntil) < Date.parse(value.validUntil)
     )
       errors.push('Coverage and its review must remain valid through the requested interval.');
-    if (e.review.status !== 'reviewed' || !e.review.attestationIds.includes(String(value.reviewId)))
+    if (
+      e.review.status !== 'reviewed' ||
+      !text(value.reviewId) ||
+      !e.review.attestationIds.includes(value.reviewId)
+    )
       errors.push('Complete coverage requires the component to name its exact coverage review.');
     if (
       !e.usableUntil ||
