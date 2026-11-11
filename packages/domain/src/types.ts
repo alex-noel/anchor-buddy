@@ -1,3 +1,5 @@
+import type { EvidenceEnvelope, HazardPrimitive, SnapshotIdentity } from './contracts.ts';
+
 /** All engine distances/depths are metres, winds/currents knots, angles true degrees. */
 export type Position = [longitude: number, latitude: number];
 export interface PolygonGeometry {
@@ -41,6 +43,8 @@ export interface SourceRecord {
   attribution: string;
   license: string;
   synthetic?: boolean;
+  /** Optional v2 provenance; absent means legacy provenance, never inferred review. */
+  evidence?: EvidenceEnvelope;
 }
 export interface ScopeGuidance {
   ratio: number;
@@ -140,7 +144,7 @@ export interface RestrictionArea {
   validUntil: string;
   sourceIds: string[];
 }
-/** Interval bounds include weather-driven water-level uncertainty, not only predicted tide. */
+/** Nominal datum-converted interval bounds; uncertainty is separate and expanded once by the engine. */
 export interface TideInterval {
   validFrom: string;
   validUntil: string;
@@ -231,6 +235,11 @@ export interface Place {
   notes: string[];
 }
 export interface RegionPack {
+  /** Absent is legacy v1; unsupported major versions are rejected. */
+  schemaVersion?: 1 | 2;
+  snapshot?: SnapshotIdentity;
+  /** Exchange-only until SAFE-01 integration; assessment validation rejects nonempty arrays. */
+  hazardPrimitives?: HazardPrimitive[];
   id: string;
   version: string;
   name: string;
