@@ -9,8 +9,8 @@ concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 env:
-  NODE_VERSION: '24.6.0'
-  PYTHON_VERSION: '3.12.9'
+  NODE_VERSION: '24.22.3'
+  PYTHON_VERSION: '3.12'
 jobs:
   check:
     name: Deterministic tests and runtime boundary
