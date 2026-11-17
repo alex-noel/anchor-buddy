@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: '.',
   testMatch: 'planner.cases.ts',
+  testIgnore: '**/planner-harness/**',
   outputDir: '../../../.artifacts/planner-ui',
   workers: 1,
   timeout: 60_000,

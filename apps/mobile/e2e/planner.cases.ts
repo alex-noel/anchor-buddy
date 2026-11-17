@@ -171,6 +171,7 @@ test('draft reload, failure retry, changed evidence notice and watch navigation'
   await expect(field(page, 'Latitude')).toHaveValue('43.02');
   await btn(page, 'Use current position').click();
   await expect(btn(page, 'Cancel location request')).toBeVisible();
+  await page.waitForFunction(() => typeof (window as any).__finishGPS === 'function');
   await field(page, 'Latitude').fill('43.03');
   await page.evaluate(() => (window as any).__finishGPS());
   await expect(field(page, 'Latitude')).toHaveValue('43.03');
