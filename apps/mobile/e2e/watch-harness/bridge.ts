@@ -51,8 +51,16 @@ export const arm = async (options: ArmOptions) => {
   });
   return status;
 };
+let deferStop = false;
+let rejectStop = false;
+let finishStop: (() => void) | undefined;
 export const stop = async () => {
   calls.stop++;
+  if (deferStop)
+    await new Promise<void>((resolve) => {
+      finishStop = resolve;
+    });
+  if (rejectStop) throw new Error('Controlled native stop failure');
   emit({ state: 'idle', serviceRunning: false });
   return status;
 };
@@ -79,4 +87,14 @@ function emit(patch: Partial<WatchStatus>) {
     deferAlarm = true;
   },
   resolveAlarm: () => finishAlarm?.(),
+  holdStop: () => {
+    deferStop = true;
+  },
+  resolveStop: () => {
+    deferStop = false;
+    finishStop?.();
+  },
+  failStop: (value: boolean) => {
+    rejectStop = value;
+  },
 };

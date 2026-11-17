@@ -10,6 +10,7 @@ import { depth } from '../lib/units';
 import { setLocal } from '../lib/storage';
 import { createPositionCapture } from '../lib/positionCapture';
 import { createAlarmTestReadiness } from '../lib/alarmTestReadiness';
+import Sheet from '../components/Sheet';
 import {
   parseInputDecimal,
   createLengthDraft,
@@ -61,6 +62,8 @@ export default function WatchScreen({
   const [permissions, setPermissions] = useState(false);
   const [permissionDetails, setPermissionDetails] = useState<Watch.WatchPermissions | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stopSession, setStopSession] = useState<{ id?: string } | null>(null);
+  const [stopError, setStopError] = useState('');
   const [verified, setVerified] = useState(false);
   const [clock, setClock] = useState(elapsed());
   const lastContact = useRef(-Infinity);
@@ -235,6 +238,61 @@ export default function WatchScreen({
     setLongitude(String(result.position[0]));
     setAnchorConfirmed(false);
   };
+  const confirmStop = async () => {
+    if (!stopSession || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setStopError('');
+    const lifecycle = lifecycleEpoch.current;
+    try {
+      const beforeEpoch = snapshotEpoch.current;
+      const before = await Watch.getStatus();
+      if (!live.current || lifecycle !== lifecycleEpoch.current) return;
+      if (beforeEpoch !== snapshotEpoch.current)
+        throw new Error('The watch status changed. Review it and retry the confirmation.');
+      accept(before);
+      if (!before.nativeAvailable)
+        throw new Error(
+          'The native watch service is unavailable. Its stopped state cannot be verified here.',
+        );
+      if (!activeStates.has(before.state)) {
+        if (before.serviceRunning)
+          throw new Error(
+            'The native service reports an inconsistent running state. Recheck its status before retrying.',
+          );
+        setStopSession(null);
+        return;
+      }
+      if (before.sessionId !== stopSession.id)
+        throw new Error(
+          'The watch session changed. Cancel and review the current watch before stopping it.',
+        );
+      await Watch.stop();
+      const afterEpoch = snapshotEpoch.current;
+      const after = await Watch.getStatus();
+      if (!live.current || lifecycle !== lifecycleEpoch.current) return;
+      if (afterEpoch !== snapshotEpoch.current)
+        throw new Error('A newer watch status arrived. Review it before confirming completion.');
+      accept(after);
+      if (activeStates.has(after.state) || after.serviceRunning)
+        throw new Error(
+          'The native service still reports an active watch. Monitoring has not been confirmed stopped; retry.',
+        );
+      setStopSession(null);
+      resetConfirmations();
+    } catch (cause) {
+      if (live.current && lifecycle === lifecycleEpoch.current) {
+        setVerified(false);
+        setStopError(
+          'Could not confirm that monitoring stopped. ' +
+            (cause instanceof Error ? cause.message : String(cause)),
+        );
+      }
+    } finally {
+      inFlight.current = false;
+      if (live.current) setBusy(false);
+    }
+  };
   const armed = status !== null && activeStates.has(status.state);
   const hasAlarm = Boolean(status?.alerts.some((alert) => !alert.acknowledged));
   const contactAge = clock - lastContact.current;
@@ -266,8 +324,10 @@ export default function WatchScreen({
   const isLive = armed && statusIsCurrent && status?.serviceRunning;
   const title = !status
     ? 'Checking watch status'
-    : armed && !statusIsCurrent
-      ? 'Monitoring status unverified'
+    : !statusIsCurrent
+      ? armed
+        ? 'Monitoring status unverified'
+        : 'Watch status unverified'
       : status.state === 'monitoring' && isLive
         ? 'Watch is running'
         : status.state === 'alarm'
@@ -808,7 +868,15 @@ export default function WatchScreen({
           >
             Apply confirmed radius
           </Button>
-          <Button secondary icon="square" disabled={busy} onPress={() => void run(Watch.stop)}>
+          <Button
+            secondary
+            icon="square"
+            disabled={busy}
+            onPress={() => {
+              setStopError('');
+              setStopSession({ id: status?.sessionId });
+            }}
+          >
             Stop watch
           </Button>
         </Card>
@@ -820,6 +888,34 @@ export default function WatchScreen({
         appropriate to the conditions. An alarm cannot be delivered after the device or monitoring
         process has stopped.
       </Notice>
+      {stopSession ? (
+        <Sheet
+          title="Stop anchor watch?"
+          onClose={() => {
+            if (!inFlight.current) setStopSession(null);
+          }}
+          pending={busy}
+          footer={
+            <>
+              {stopError ? <Notice tone="warning">{stopError}</Notice> : null}
+              <Button secondary disabled={busy} onPress={() => setStopSession(null)}>
+                Keep monitoring
+              </Button>
+              <Button disabled={busy} onPress={() => void confirmStop()}>
+                {busy ? 'Verifying stop…' : 'Confirm stop watch'}
+              </Button>
+            </>
+          }
+        >
+          <Text style={{ color: c.ink, lineHeight: 21 }}>
+            Stop monitoring session {stopSession.id ?? '(identifier unavailable)'}? Position
+            monitoring and future alerts will end only after the native service confirms the stop.
+          </Text>
+          <Text style={{ color: c.muted, lineHeight: 20 }}>
+            Acknowledging an alert keeps monitoring. Stopping the watch is a separate action.
+          </Text>
+        </Sheet>
+      ) : null}
     </ScrollView>
   );
 }

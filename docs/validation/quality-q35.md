@@ -1,0 +1,5 @@
+# Q35 explicit stop confirmation
+
+Stopping requires a named-session confirmation. Keep monitoring/cancel issues no command. A synchronous latch blocks duplicate stop commands; fresh native status is checked before the stop and the session must still match the confirmation. A fresh post-command read must show no active/running service before completion. Changed lifecycle, newer status events, unavailable service or inconsistent running state cannot grant a stale confirmation. Failure retains a retry and unverified status. Alert acknowledgment remains separate.
+
+Sol independently reviewed the watch boundary and found no blocker; its defensive native-availability/service-state/lifecycle feedback suggestions were incorporated. The isolated real WatchScreen/native-substitute harness passed 9/9 including cancel, delayed stop, exactly one command, failed stop followed by explicit retry, and changed session rejecting the old confirmation. Browser production entry remains unavailable; no automatic navigation action arms/stops/recenters the watch. Actual device stop transition remains a Q36/Q37 gate.

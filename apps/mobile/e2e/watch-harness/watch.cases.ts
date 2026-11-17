@@ -158,11 +158,15 @@ test('backgrounding invalidates delayed permission and alarm readiness', async (
   await expect(page.getByRole('button', { name: 'Arm anchor watch', exact: true })).toBeDisabled();
 });
 
-test('details preserve visible blocking reasons and separate source dates', async ({ page }, testInfo) => {
+test('details preserve visible blocking reasons and separate source dates', async ({
+  page,
+}, testInfo) => {
   for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/?details');
-    await expect(page.getByText('Synthetic exclusion remains visible before planning.')).toBeVisible();
+    await expect(
+      page.getByText('Synthetic exclusion remains visible before planning.'),
+    ).toBeVisible();
     await expect(page.getByText('Synthetic depth evidence is missing.')).toBeVisible();
     await expect(page.getByText(/Historical assessment/)).toBeVisible();
     await expect(page.getByText('Synthetic test data pack', { exact: true })).toBeVisible();
@@ -171,7 +175,77 @@ test('details preserve visible blocking reasons and separate source dates', asyn
     await expect(page.getByText('Secondary synthetic context.')).toBeVisible();
     await page.getByRole('button', { name: /Sources & freshness/ }).click();
     await expect(page.getByText(/Retrieved/).first()).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: testInfo.outputPath('details-' + width + '.png'), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: testInfo.outputPath('details-' + width + '.png'),
+      fullPage: true,
+    });
   }
+});
+
+test('stop confirmation cancels without side effects and waits for native completion', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(() =>
+    (window as any).watchHarness.emit({
+      state: 'monitoring',
+      serviceRunning: true,
+      sessionId: 'confirmed-session',
+      anchor: { latitude: 45, longitude: 12 },
+      radiusM: 50,
+    }),
+  );
+  const stop = page.getByRole('button', { name: 'Stop watch', exact: true });
+  await stop.click();
+  await expect(page.getByText(/Stop monitoring session confirmed-session/)).toBeVisible();
+  await page.getByRole('button', { name: 'Keep monitoring', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(0);
+  await stop.click();
+  await page.evaluate(() => (window as any).watchHarness.holdStop());
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Verifying stop…', exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(1);
+  await page.evaluate(() => (window as any).watchHarness.resolveStop());
+  await expect(page.getByRole('dialog', { name: 'Stop anchor watch?', exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText('Watch not armed', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(1);
+});
+
+test('stop failure retains retry and a changed session requires a new confirmation', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(() =>
+    (window as any).watchHarness.emit({
+      state: 'monitoring',
+      serviceRunning: true,
+      sessionId: 'first-session',
+      anchor: { latitude: 45, longitude: 12 },
+      radiusM: 50,
+    }),
+  );
+  await page.getByRole('button', { name: 'Stop watch', exact: true }).click();
+  await page.evaluate(() => (window as any).watchHarness.emit({ sessionId: 'second-session' }));
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(page.getByText(/The watch session changed/)).toBeVisible();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(0);
+  await page.getByRole('button', { name: 'Keep monitoring', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop watch', exact: true }).click();
+  await page.evaluate(() => (window as any).watchHarness.failStop(true));
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(
+    page.getByText(/Could not confirm that monitoring stopped.*Controlled native stop failure/),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(1);
+  await page.evaluate(() => (window as any).watchHarness.failStop(false));
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Stop anchor watch?', exact: true })).toHaveCount(
+    0,
+  );
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(2);
 });
