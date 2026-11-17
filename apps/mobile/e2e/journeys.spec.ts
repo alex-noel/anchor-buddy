@@ -61,8 +61,8 @@ async function completeSetup(page: Page) {
   })) {
     await field(page, name).fill(value);
   }
-  await button(page, /^Anchor design:/).click();
-  await button(page, 'Modern scoop').click();
+  await page.getByRole('combobox', { name: 'Anchor design', exact: true }).click();
+  await page.getByRole('option', { name: 'Modern scoop', exact: true }).click();
   await button(page, 'Save vessel & continue').click();
   await button(page, 'Configure defaults').click();
   await button(page, 'Save defaults').click();

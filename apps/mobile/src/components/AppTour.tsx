@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Sheet from './Sheet';
-import { Button, Icon, type IconName } from './ui';
+import { Button, Icon, s, type ControlState, type IconName } from './ui';
 import { colors as c } from '../theme';
 
 type Section = 'explore' | 'saved' | 'settings';
@@ -65,15 +65,22 @@ export function AppTour({ onClose, onSearch, onSection }: AppTourProps) {
   const last = index === steps.length - 1;
   return (
     <Sheet title="App tour" subtitle={`Step ${index + 1} of ${steps.length}`} onClose={onClose}>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {steps.map((step, i) => (
           <Pressable
             key={step.title}
             accessibilityRole="button"
             accessibilityLabel={`Tour step ${i + 1}: ${step.title}`}
             accessibilityState={{ selected: i === index }}
+            aria-current={i === index ? 'step' : undefined}
+            aria-pressed={i === index}
             onPress={() => setIndex(i)}
-            style={{ flex: 1, height: 20, justifyContent: 'center' }}
+            style={({ pressed, focused }: ControlState) => [
+              s.hitTarget,
+              { flex: 1, justifyContent: 'center', borderRadius: 6 },
+              pressed && { opacity: 0.75 },
+              focused && s.focusRing,
+            ]}
           >
             <View
               style={{

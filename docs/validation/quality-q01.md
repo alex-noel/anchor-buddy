@@ -42,7 +42,7 @@ Ratios were computed from sRGB hex values with the WCAG relative-luminance formu
 
 ## Before/after captures and mounted inspection
 
-Not captured. The baseline had no screenshots in the assigned files. A local Expo web session was attempted with `npm run web -- --port 8081`, but no listener became available (`curl http://127.0.0.1:8081` failed to connect); a new, task-owned browser tab then reported `net::ERR_CONNECTION_REFUSED`. Therefore actual app inspection at 390 and 1280 CSS px and at 200% text remains blocked. The examples above must not be treated as screenshots or mounted-control evidence.
+The worker's initial local server attempt was unavailable. Subsequent integrator captures at 390×844 and 1280×900 are in `.artifacts/quality-run/`, compared with the baseline setup/settings inspection from the planning pass. The Q02 mounted follow-up also exercised these shared primitives at actual Chromium tab zoom 2 (effective 640×450 CSS px), retained before/after captures and measured hit targets. See [Q02 evidence](quality-q02.md). The tables above remain implementation examples, not screenshots. Spoken screen-reader and native-device evidence remain separate Q38 gates.
 
 ## Verification
 
