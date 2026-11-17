@@ -86,8 +86,13 @@ export async function discoverRegion(
 
 export async function findLocations(
   query: string,
+  signal?: AbortSignal,
 ): Promise<{ name: string; position: Position }[]> {
-  const value = (await request('/v1/geocode?q=' + encodeURIComponent(query.trim()))) as {
+  const value = (await request(
+    '/v1/geocode?q=' + encodeURIComponent(query.trim()),
+    {},
+    signal,
+  )) as {
     results?: unknown;
   };
   if (!Array.isArray(value.results))

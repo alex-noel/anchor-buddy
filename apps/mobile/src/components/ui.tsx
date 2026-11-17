@@ -134,6 +134,7 @@ export function Field({
   error,
   invalid = false,
   inputRef,
+  onSubmitEditing,
 }: {
   label: string;
   value: string;
@@ -150,6 +151,7 @@ export function Field({
   invalid?: boolean;
   /** Lets form owners focus this input without reaching into the rendered tree. */
   inputRef?: React.Ref<React.ComponentRef<typeof TextInput>>;
+  onSubmitEditing?: () => void;
 }) {
   const hintId = useId();
   const errorId = useId();
@@ -182,6 +184,7 @@ export function Field({
           aria-describedby={describedBy}
           value={value}
           onChangeText={onChange}
+          onSubmitEditing={onSubmitEditing}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           keyboardType={
@@ -197,7 +200,7 @@ export function Field({
           }
           autoCorrect={false}
           spellCheck={false}
-          returnKeyType="done"
+          returnKeyType={onSubmitEditing ? 'search' : 'done'}
           autoCapitalize="none"
           style={[s.input, disabled && { opacity: 0.6 }]}
         />

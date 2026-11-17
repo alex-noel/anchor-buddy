@@ -120,3 +120,121 @@ test('search defaults and edits keep collapsed limits and multiple seabeds', asy
   await button(page, 'Edit').click();
   await expect(searchDepth).toHaveAccessibleDescription(/8 m.*Sand.*Mud/);
 });
+
+test('location lookup only submits explicitly and discards late replies', async ({
+  context,
+  page,
+}) => {
+  await configureVessel(page);
+  await finishSetup(page);
+  const queries: string[] = [];
+  const longName =
+    'Northern Harbour and Coastal Nature Reserve near the Outer Marina and River Mouth';
+  const held: (() => void)[] = [];
+  await page.route('**/v1/geocode?*', async (route) => {
+    const query = new URL(route.request().url()).searchParams.get('q')!;
+    queries.push(query);
+    if (query === 'Old query' || query === 'Cancelled query') {
+      await new Promise<void>((resolve) => held.push(resolve));
+      await route.fulfill({
+        json: { results: [{ name: 'Late obsolete match', position: [12, 45] }] },
+      });
+    } else if (query === 'Provider error') {
+      await route.fulfill({ status: 503, json: { message: 'Place provider unavailable.' } });
+    } else {
+      await route.fulfill({
+        json: {
+          results: query === 'Harbour' ? [{ name: longName, position: [18.65, 54.35] }] : [],
+        },
+      });
+    }
+  });
+  const matchesQuery = (url: string, query: string) => {
+    const target = new URL(url);
+    return target.pathname === '/v1/geocode' && target.searchParams.get('q') === query;
+  };
+
+  try {
+    await button(page, 'Plan a stay').click();
+    const search = page.getByRole('dialog', { name: 'Plan the stay', exact: true });
+    const input = textbox(search, 'Town, harbour or address');
+    await input.fill('Old query');
+    expect(queries).toEqual([]);
+    await input.press('Enter');
+    await expect.poll(() => held.length).toBe(1);
+    const outdated = page.waitForEvent('requestfailed', (request) =>
+      matchesQuery(request.url(), 'Old query'),
+    );
+    await input.fill('Harbour');
+    expect((await outdated).failure()?.errorText).toMatch(/ABORTED/i);
+    held.shift()?.();
+    expect(queries).toEqual(['Old query']);
+    await button(search, 'Find location').click();
+    const match = button(search, 'Use ' + longName);
+    await expect(match).toBeVisible();
+    expect((await match.boundingBox())!.height).toBeGreaterThan(44);
+    await match.click();
+    const selected = search.getByText('Selected area · ' + longName, { exact: true });
+    await expect(selected).toBeVisible();
+
+    await input.fill('Cancelled query');
+    await input.press('Enter');
+    await expect.poll(() => held.length).toBe(1);
+    const cancelled = page.waitForEvent('requestfailed', (request) =>
+      matchesQuery(request.url(), 'Cancelled query'),
+    );
+    await button(search, 'Cancel lookup').click();
+    expect((await cancelled).failure()?.errorText).toMatch(/ABORTED/i);
+    held.shift()?.();
+    await expect(search.getByText('Location lookup cancelled.')).toBeVisible();
+    await expect(button(search, 'Use Late obsolete match')).toHaveCount(0);
+    await expect(selected).toBeVisible();
+
+    await input.fill('Empty query');
+    await input.press('Enter');
+    await expect(search.getByText(/No locations found/)).toBeVisible();
+    await input.fill('Provider error');
+    await input.press('Enter');
+    await expect(
+      search.getByText(/Location lookup failed.*Place provider unavailable/),
+    ).toBeVisible();
+    await context.setOffline(true);
+    await input.fill('Offline query');
+    await input.press('Enter');
+    await expect(button(search, 'Find location')).toBeDisabled();
+    await expect(search.getByText(/Location lookup needs a connection/)).toBeVisible();
+    expect(queries).toEqual([
+      'Old query',
+      'Harbour',
+      'Cancelled query',
+      'Empty query',
+      'Provider error',
+    ]);
+    await expect(selected).toBeVisible();
+
+    await context.setOffline(false);
+    await expect(button(search, 'Find location')).toBeEnabled();
+    await page.route('**/v1/regions/discover', (route) => {
+      return route.fulfill({
+        json: {
+          pack: createEmptyRegion([18.65, 54.35], 3, longName),
+          providers: [],
+          partial: true,
+          notices: [],
+        },
+      });
+    });
+    const completed = page.waitForRequest(
+      (request) => new URL(request.url()).pathname === '/v1/regions/discover',
+      { timeout: 10_000 },
+    );
+    await button(search, 'Search this area').click();
+    const payload = (await completed).postDataJSON();
+    expect(payload).toMatchObject({ name: longName, center: [18.65, 54.35] });
+    expect(payload).not.toHaveProperty('timezone');
+    await button(page, 'Edit').click();
+    await expect(selected).toBeVisible();
+  } finally {
+    for (const release of held) release();
+  }
+});

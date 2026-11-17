@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Linking, Pressable, Text, View } from 'react-native';
 import {
   getPreferredBeddings,
@@ -30,7 +30,7 @@ import {
   withDefaultStayDuration,
 } from '../lib/formDrafts';
 import LocalDateHourField from './LocalDateHourField';
-import { Button, Chip, Field, Icon, Notice, s } from './ui';
+import { Button, Chip, Field, Icon, Notice, s, type ControlState } from './ui';
 import { colors as c } from '../theme';
 import { fromIsoToLocalHour, localHourToIso, timezoneLabel } from '../lib/localDateHour';
 
@@ -154,14 +154,17 @@ export function SearchSheet({
   search: SearchRequest;
   onSave: (
     s: SearchRequest,
-    selection?: { regionName: string; timezone: string },
+    selection?: { regionName: string; timezone?: string },
   ) => void | Promise<void>;
   onClose: () => void;
   pack?: RegionPack;
   offline?: boolean;
   units?: UnitSystem;
   mode?: 'search' | 'defaults';
-  onFindLocation?: (query: string) => Promise<{ name: string; position: Position }[]>;
+  onFindLocation?: (
+    query: string,
+    signal?: AbortSignal,
+  ) => Promise<{ name: string; position: Position }[]>;
   initialRegionId?: string;
   initialRegionName?: string;
   initialRegionTimezone?: string;
@@ -189,7 +192,7 @@ export function SearchSheet({
   const [bedding, setBedding] = useState<Bedding[]>(() => getPreferredBeddings(search));
   const [locationQuery, setLocationQuery] = useState('');
   const [selectedArea, setSelectedArea] = useState<
-    { id?: string; regionName: string; timezone: string } | undefined
+    { id?: string; regionName: string; timezone?: string } | undefined
   >(() => {
     const preset = MAP_REGIONS.find((region) => region.id === initialRegionId);
     if (preset && preset.center.every((coordinate, index) => coordinate === search.origin[index]))
@@ -197,16 +200,35 @@ export function SearchSheet({
     return initialRegionName
       ? {
           regionName: initialRegionName,
-          timezone: initialRegionTimezone ?? pack?.timezone ?? 'UTC',
+          timezone: initialRegionTimezone,
         }
       : undefined;
   });
   const [locationResults, setLocationResults] = useState<{ name: string; position: Position }[]>(
     [],
   );
-  const [locationError, setLocationError] = useState('');
+  const [locationFeedback, setLocationFeedback] = useState('');
   const [findingLocation, setFindingLocation] = useState(false);
   const locationRequest = useRef(0);
+  const locationAbort = useRef<AbortController | null>(null);
+  const invalidateLookup = useCallback(() => {
+    locationRequest.current++;
+    locationAbort.current?.abort();
+    locationAbort.current = null;
+  }, []);
+  const cancelLookup = useCallback(
+    (feedback = '') => {
+      invalidateLookup();
+      setFindingLocation(false);
+      setLocationResults([]);
+      setLocationFeedback(feedback);
+    },
+    [invalidateLookup],
+  );
+  useEffect(() => invalidateLookup, [invalidateLookup]);
+  useEffect(() => {
+    if (offline) cancelLookup();
+  }, [offline, cancelLookup]);
   const [arrival, setArrival] = useState(() => fromIsoToLocalHour(search.arrival));
   const [departure, setDeparture] = useState(() => fromIsoToLocalHour(search.departure));
   const [stayHours, setStayHours] = useState(() =>
@@ -253,36 +275,43 @@ export function SearchSheet({
   const minRadius = liveRadius ? 0.25 : 0.01;
   const maxRadius = liveRadius ? 25 : 50;
   const position = useMemo(() => readCoordinateDraft(lat, lon), [lat, lon]);
-  const setPosition = (p: Position) => {
+  const setPosition = (p: Position, name?: string) => {
+    cancelLookup();
     setAreaConfirmed(true);
     setError('');
     setLat(p[1].toFixed(6));
     setLon(p[0].toFixed(6));
-    setSelectedArea(undefined);
+    setSelectedArea(name ? { regionName: name } : undefined);
     invalid.clear('latitude');
     invalid.clear('longitude');
   };
   const findLocation = async () => {
-    if (!onFindLocation || !locationQuery.trim() || offline) return;
+    const query = locationQuery.trim();
+    if (!onFindLocation || !query || offline || saveLock.current || locationAbort.current) return;
     const request = ++locationRequest.current;
+    const abort = new AbortController();
+    locationAbort.current = abort;
     setFindingLocation(true);
-    setLocationError('');
+    setLocationFeedback('');
     setLocationResults([]);
     try {
-      const matches = await onFindLocation(locationQuery.trim());
+      const matches = await onFindLocation(query, abort.signal);
       if (request !== locationRequest.current) return;
       setLocationResults(matches);
       if (!matches.length)
-        setLocationError('No locations found. Try a nearby town or choose a point on the map.');
+        setLocationFeedback(
+          'No locations found. Try a nearby town, choose an area or enter coordinates.',
+        );
     } catch (error) {
       if (request === locationRequest.current)
-        setLocationError(
-          error instanceof Error
-            ? error.message
-            : 'Location search is unavailable. Choose a point on the map.',
+        setLocationFeedback(
+          `Location lookup failed.${error instanceof Error ? ' ' + error.message : ''} Try again, choose an area or enter coordinates.`,
         );
     } finally {
-      if (request === locationRequest.current) setFindingLocation(false);
+      if (request === locationRequest.current) {
+        locationAbort.current = null;
+        setFindingLocation(false);
+      }
     }
   };
   const field = (key: NumericKey, label: string, help?: string) => (
@@ -387,6 +416,7 @@ export function SearchSheet({
       return;
     }
     saveLock.current = true;
+    cancelLookup();
     Keyboard.dismiss();
     setSaving(true);
     setError('');
@@ -439,6 +469,7 @@ export function SearchSheet({
               units={units}
               selectedId={selectedArea?.id}
               onSelect={(preset) => {
+                cancelLookup();
                 setAreaConfirmed(true);
                 setError('');
                 setLat(String(preset.center[1]));
@@ -455,11 +486,10 @@ export function SearchSheet({
                   regionName: preset.name,
                   timezone: preset.timezone,
                 });
-                setLocationResults([]);
                 setLocationQuery('');
-                setLocationError('');
-                locationRequest.current++;
-                setFindingLocation(false);
+                invalid.clear('latitude');
+                invalid.clear('longitude');
+                invalid.clear('maxDistanceNm');
               }}
             />
             {selectedArea ? (
@@ -470,12 +500,11 @@ export function SearchSheet({
                 <Field
                   label="Town, harbour or address"
                   value={locationQuery}
+                  disabled={saving}
+                  onSubmitEditing={() => void findLocation()}
                   onChange={(value) => {
                     setLocationQuery(value);
-                    setLocationResults([]);
-                    setLocationError('');
-                    locationRequest.current++;
-                    setFindingLocation(false);
+                    cancelLookup();
                   }}
                   help={
                     offline
@@ -487,40 +516,56 @@ export function SearchSheet({
                   secondary
                   small
                   icon="search"
-                  disabled={offline || findingLocation || !locationQuery.trim()}
+                  disabled={saving || offline || findingLocation || !locationQuery.trim()}
                   onPress={() => void findLocation()}
                 >
                   {findingLocation ? 'Finding locations…' : 'Find location'}
                 </Button>
+                {findingLocation ? (
+                  <Button
+                    secondary
+                    small
+                    onPress={() => cancelLookup('Location lookup cancelled.')}
+                  >
+                    Cancel lookup
+                  </Button>
+                ) : null}
                 {locationResults.map((match, index) => (
                   <Pressable
                     key={`${match.name}-${index}`}
                     accessibilityRole="button"
                     accessibilityLabel={`Use ${match.name}`}
                     onPress={() => {
-                      setPosition(match.position);
+                      setPosition(match.position, match.name);
                       setLocationQuery(match.name);
-                      setLocationResults([]);
                     }}
-                    style={{
-                      padding: 12,
-                      borderWidth: 1,
-                      borderColor: c.line,
-                      borderRadius: 8,
-                      backgroundColor: c.white,
-                      flexDirection: 'row',
-                      gap: 10,
-                    }}
+                    style={({ pressed, focused }: ControlState) => [
+                      s.hitTarget,
+                      {
+                        padding: 12,
+                        borderWidth: 1,
+                        borderColor: c.line,
+                        borderRadius: 8,
+                        backgroundColor: c.white,
+                        flexDirection: 'row',
+                        alignItems: 'flex-start',
+                        gap: 10,
+                      },
+                      pressed && { opacity: 0.75 },
+                      focused && s.focusRing,
+                    ]}
                   >
                     <Icon name="map-pin" size={16} />
-                    <Text style={{ flex: 1, color: c.ink, fontSize: 13, lineHeight: 19 }}>
+                    <Text
+                      style={{ flex: 1, minWidth: 0, color: c.ink, fontSize: 13, lineHeight: 19 }}
+                    >
                       {match.name}
                     </Text>
                   </Pressable>
                 ))}
-                {locationError ? (
-                  <Text style={{ color: c.red, fontSize: 12, lineHeight: 18 }}>
-                    {locationError}
+                {locationFeedback ? (
+                  <Text accessibilityLiveRegion="polite" style={s.help}>
+                    {locationFeedback}
                   </Text>
                 ) : null}
               </View>
@@ -581,6 +626,7 @@ export function SearchSheet({
                   disabled={saving}
                   {...invalid.props('latitude')}
                   onChange={(value) => {
+                    cancelLookup();
                     setLat(value);
                     setAreaConfirmed(true);
                     setError('');
@@ -597,6 +643,7 @@ export function SearchSheet({
                   disabled={saving}
                   {...invalid.props('longitude')}
                   onChange={(value) => {
+                    cancelLookup();
                     setLon(value);
                     setAreaConfirmed(true);
                     setError('');

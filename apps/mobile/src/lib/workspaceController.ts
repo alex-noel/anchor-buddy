@@ -85,7 +85,7 @@ export type WorkspaceAction =
   | {
       type: 'commitSearch';
       search: SearchRequest;
-      area?: { regionName: string; timezone: string };
+      area?: { regionName: string; timezone?: string };
       filters?: ResultFilters;
       pin?: Position;
     }
