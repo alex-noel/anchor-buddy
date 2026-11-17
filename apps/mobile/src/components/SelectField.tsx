@@ -1,5 +1,13 @@
-import React, { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import React, {
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import {
+  AccessibilityInfo,
   Platform,
   Pressable,
   ScrollView,
@@ -25,6 +33,8 @@ export function SelectField({
   options,
   onChange,
   help,
+  error,
+  controlRef,
   required = false,
   disabled = false,
 }: {
@@ -33,6 +43,8 @@ export function SelectField({
   options: SelectOption[];
   onChange: (value: string) => void;
   help?: string;
+  error?: string;
+  controlRef?: React.Ref<{ focus(): void }>;
   required?: boolean;
   disabled?: boolean;
 }) {
@@ -50,6 +62,22 @@ export function SelectField({
   const highlighted = open ? Math.min(activeIndex, options.length - 1) : null;
   const optionId = (index: number) => listId + '-' + index;
   const highlightedId = highlighted === null ? undefined : optionId(highlighted);
+  const describedBy = [help ? id + '-help' : '', error ? id + '-error' : '']
+    .filter(Boolean)
+    .join(' ');
+
+  useImperativeHandle(
+    controlRef,
+    () => ({
+      focus() {
+        const control = trigger.current;
+        if (!control) return;
+        if (web) control.focus();
+        else AccessibilityInfo.sendAccessibilityEvent(control, 'focus');
+      },
+    }),
+    [],
+  );
 
   useLayoutEffect(() => {
     if (web && highlightedId) {
@@ -152,11 +180,18 @@ export function SelectField({
         accessibilityRole={web ? 'combobox' : 'button'}
         accessibilityLabel={web ? label : `${label}: ${selected?.label ?? 'Choose'}`}
         accessibilityState={{ expanded: open, disabled: unavailable }}
-        accessibilityHint={[required ? 'Required.' : '', help ?? ''].filter(Boolean).join(' ')}
+        accessibilityHint={[
+          required ? 'Required.' : '',
+          help,
+          error ? `Error: ${error}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(' ')}
         disabled={unavailable}
         aria-expanded={open}
         aria-required={web ? required : undefined}
-        aria-describedby={web && help ? id + '-help' : undefined}
+        aria-invalid={web ? Boolean(error) : undefined}
+        aria-describedby={web && describedBy ? describedBy : undefined}
         {...keyboard}
         onPress={() => {
           if (unavailable) return;
@@ -166,6 +201,7 @@ export function SelectField({
         }}
         style={({ pressed, focused }: ControlState) => [
           s.inputWrap,
+          error && s.inputInvalid,
           s.hitTarget,
           { gap: 12 },
           (unavailable || pressed) && { opacity: unavailable ? 0.55 : 0.75 },
@@ -252,6 +288,15 @@ export function SelectField({
       {help ? (
         <Text nativeID={web ? id + '-help' : undefined} style={s.help}>
           {help}
+        </Text>
+      ) : null}
+      {error ? (
+        <Text
+          nativeID={web ? id + '-error' : undefined}
+          accessibilityLiveRegion="polite"
+          style={s.fieldError}
+        >
+          {error}
         </Text>
       ) : null}
     </View>

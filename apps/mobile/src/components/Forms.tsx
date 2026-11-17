@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Linking, Pressable, Text, View, type TextInput } from 'react-native';
+import { Keyboard, Linking, Pressable, Text, View } from 'react-native';
 import {
   getPreferredBeddings,
   CANONICAL_CONVERSIONS,
@@ -14,6 +14,7 @@ import {
   type VesselProfile,
 } from '@anchor-buddy/domain';
 import Sheet from './Sheet';
+import { FormDisclosure, FormGroup } from './FormGroup';
 import Chart from './Chart';
 import SelectField from './SelectField';
 import SeabedSelect from './SeabedSelect';
@@ -77,9 +78,9 @@ function useDirtyDraft(values: readonly unknown[]) {
   return snapshot !== initial;
 }
 
-function useInvalidFields<Key extends string>(order: readonly Key[]) {
+function useInvalidFields<Key extends string>(order: readonly Key[], reveal?: (key: Key) => void) {
   type Errors = Partial<Record<Key, string>>;
-  const inputs = useRef<Partial<Record<Key, React.ComponentRef<typeof TextInput> | null>>>({});
+  const inputs = useRef<Partial<Record<Key, { focus(): void } | null>>>({});
   const [messages, setMessages] = useState<Errors>({});
   const [focus, setFocus] = useState<{ key: Key }>();
   useEffect(() => {
@@ -89,7 +90,7 @@ function useInvalidFields<Key extends string>(order: readonly Key[]) {
     props(key: Key) {
       return {
         error: messages[key],
-        inputRef: (node: React.ComponentRef<typeof TextInput> | null) => {
+        inputRef: (node: { focus(): void } | null) => {
           inputs.current[key] = node;
         },
       };
@@ -101,11 +102,13 @@ function useInvalidFields<Key extends string>(order: readonly Key[]) {
       const { fields, summary } = partitionFormErrors(domainErrors);
       const next = { ...local };
       for (const [key, errors] of Object.entries(fields)) {
-        if (order.includes(key as Key)) next[key as Key] = errors.join(' ');
+        if (order.includes(key as Key))
+          next[key as Key] = [next[key as Key], ...errors].filter(Boolean).join(' ');
         else summary.push(...errors);
       }
       setMessages(next);
       const first = order.find((key) => next[key]);
+      if (first !== undefined) reveal?.(first);
       setFocus(first === undefined ? undefined : { key: first });
       return summary.join(' ');
     },
@@ -115,14 +118,19 @@ function useInvalidFields<Key extends string>(order: readonly Key[]) {
 const searchFieldOrder = ['latitude', 'longitude', ...numericKeys, 'stayHours'] as const;
 const vesselFieldOrder = [
   'name',
+  'type',
   'lengthM',
   'beamM',
   'loadedDraftM',
   'displacementKg',
-  'airDraftM',
+  'anchorDesign',
+  'rodeType',
   'usableLengthM',
   'bowRollerHeightM',
+  'airDraftM',
 ] as const;
+type VesselFieldKey = (typeof vesselFieldOrder)[number];
+type VesselNumberKey = Exclude<VesselFieldKey, 'name' | 'type' | 'anchorDesign' | 'rodeType'>;
 
 export function SearchSheet({
   search,
@@ -805,7 +813,13 @@ export function ProfileSheet({
   const [v, setV] = useState(() => JSON.parse(JSON.stringify(vessel)) as VesselProfile);
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState('');
-  const invalid = useInvalidFields(vesselFieldOrder);
+  const [airDraftOpen, setAirDraftOpen] = useState(false);
+  const invalid = useInvalidFields(vesselFieldOrder, (key) => {
+    if (key === 'airDraftM') setAirDraftOpen(true);
+  });
+  const { inputRef: vesselTypeRef, error: vesselTypeError } = invalid.props('type');
+  const { inputRef: anchorDesignRef, error: anchorDesignError } = invalid.props('anchorDesign');
+  const { inputRef: rodeTypeRef, error: rodeTypeError } = invalid.props('rodeType');
   const lengthRatio = units === 'imperial' ? feetPerMetre : 1;
   const massRatio = units === 'imperial' ? 1 / CANONICAL_CONVERSIONS.kilogramsPerPound : 1;
   const lengthUnit = units === 'imperial' ? 'ft' : 'm';
@@ -831,11 +845,7 @@ export function ProfileSheet({
     ),
   );
   const dirty = useDirtyDraft([v, dimensions]);
-  const number = (
-    key: Exclude<(typeof vesselFieldOrder)[number], 'name'>,
-    label: string,
-    help?: string,
-  ) => (
+  const number = (key: VesselNumberKey, label: string, help?: string) => (
     <Field
       key={key}
       label={label}
@@ -865,9 +875,12 @@ export function ProfileSheet({
     if (equipmentChanged(vessel, next)) next.anchor.scopeGuidance = null;
     const errors = validateVessel(next);
     if (errors.length) {
-      const local: Partial<Record<(typeof vesselFieldOrder)[number], string>> = {};
+      const local: Partial<Record<VesselFieldKey, string>> = {};
       const summary = errors.filter((message) => {
         if (message === 'Vessel name is required.') local.name = message;
+        else if (message === 'Unsupported vessel type.') local.type = message;
+        else if (message === 'Anchor type is required.') local.anchorDesign = message;
+        else if (message === 'Rode type is required.') local.rodeType = message;
         else if (message.startsWith('Air draft must')) local.airDraftM = message;
         else if (message.startsWith('Usable rode must')) local.usableLengthM = message;
         else if (message.startsWith('Bow roller height must')) local.bowRollerHeightM = message;
@@ -929,7 +942,7 @@ export function ProfileSheet({
         </>
       }
     >
-      <View style={{ gap: 20 }}>
+      <FormGroup title="Vessel" help="Enter your vessel’s details and select its hull type.">
         <Field
           label="Vessel name"
           required
@@ -945,6 +958,9 @@ export function ProfileSheet({
         <SelectField
           label="Vessel type"
           disabled={saving}
+          required
+          controlRef={vesselTypeRef}
+          error={vesselTypeError}
           help="For a sailing or powered multihull, choose Catamaran or Trimaran so beam and tariff checks use its hull type."
           value={v.type}
           options={[
@@ -953,8 +969,20 @@ export function ProfileSheet({
             { value: 'catamaran', label: 'Catamaran' },
             { value: 'trimaran', label: 'Trimaran' },
           ]}
-          onChange={(type) => setV((p) => ({ ...p, type: type as VesselProfile['type'] }))}
+          onChange={(type) => {
+            setV((p) => ({ ...p, type: type as VesselProfile['type'] }));
+            invalid.clear('type');
+          }}
         />
+      </FormGroup>
+      <FormGroup
+        title="Vessel dimensions"
+        help={
+          units === 'imperial'
+            ? 'Dimensions in feet · Displacement in pounds'
+            : 'Dimensions in metres · Displacement in kilograms'
+        }
+      >
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
           {number('lengthM', 'Length overall')}
           {number('beamM', 'Beam')}
@@ -963,16 +991,14 @@ export function ProfileSheet({
           {number('loadedDraftM', 'Loaded draft', 'Include fuel, water, stores and people.')}
           {number('displacementKg', 'Displacement')}
         </View>
-        {number(
-          'airDraftM',
-          'Air draft (optional)',
-          'Height above the waterline, including mast or aerials.',
-        )}
-        <Eyebrow>Anchoring equipment</Eyebrow>
+      </FormGroup>
+      <FormGroup title="Anchoring equipment" help="Enter the equipment and usable rode you carry.">
         <SelectField
           label="Anchor design"
           disabled={saving}
           required
+          controlRef={anchorDesignRef}
+          error={anchorDesignError}
           value={v.anchor.type}
           options={
             knownType
@@ -988,24 +1014,31 @@ export function ProfileSheet({
                   },
                 ]
           }
-          onChange={(type) => setV((p) => ({ ...p, anchor: { ...p.anchor, type } }))}
-          help="Choose the design family. Reviewed guidance must still match your actual anchor and boat."
+          onChange={(type) => {
+            setV((p) => ({ ...p, anchor: { ...p.anchor, type } }));
+            invalid.clear('anchorDesign');
+          }}
+          help="Choose the design family of the anchor you use."
         />
         <SelectField
           label="Rode configuration"
           disabled={saving}
+          required
+          controlRef={rodeTypeRef}
+          error={rodeTypeError}
           value={v.anchor.rodeType}
           options={[
             { value: 'chain', label: 'All chain' },
             { value: 'mixed', label: 'Chain and rope' },
             { value: 'rope', label: 'Rope' },
           ]}
-          onChange={(rodeType) =>
+          onChange={(rodeType) => {
             setV((p) => ({
               ...p,
               anchor: { ...p.anchor, rodeType: rodeType as VesselProfile['anchor']['rodeType'] },
-            }))
-          }
+            }));
+            invalid.clear('rodeType');
+          }}
         />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
           {number(
@@ -1017,10 +1050,26 @@ export function ProfileSheet({
         </View>
         <Text style={s.help}>
           {equipmentChanged(vessel, profileDraft()) || !vessel.anchor.scopeGuidance
-            ? 'Boat or equipment changes require reviewed scope guidance before anchoring assessments can pass. Choosing a design does not select a safe scope ratio.'
+            ? 'Anchoring assessments require scope guidance reviewed for your vessel and equipment.'
             : `Current scope guidance: ${vessel.anchor.scopeGuidance.ratio}:1 within its published operating limits. See result evidence for its source and review status.`}
         </Text>
-      </View>
+      </FormGroup>
+      <FormDisclosure
+        title="Optional air draft"
+        summary={
+          dimensions.airDraftM.trim()
+            ? `${dimensions.airDraftM} ${lengthUnit}`
+            : 'Height above the waterline'
+        }
+        expanded={airDraftOpen}
+        onToggle={() => setAirDraftOpen(!airDraftOpen)}
+      >
+        {number(
+          'airDraftM',
+          'Air draft (optional)',
+          'Include the mast and any aerials above the waterline.',
+        )}
+      </FormDisclosure>
     </Sheet>
   );
 }
