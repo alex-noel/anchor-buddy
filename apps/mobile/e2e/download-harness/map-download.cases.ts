@@ -171,6 +171,16 @@ test('download stages show preparation, coarse partial readiness, pause, resume,
     body: await page.screenshot({ fullPage: true }),
     contentType: 'image/png',
   });
+
+  await button(page, /^Close dialog$/).click();
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await page.getByRole('switch', { name: 'Offline planning', exact: true }).click();
+  await page.getByRole('tab', { name: 'Saved', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Saved maps · 1', exact: true })).toBeVisible();
+  await button(page, /^Open map$/).click();
+  await expect(page.getByText('Downloaded basemap available in saved areas')).toBeVisible();
+  await expect(page.getByText('No downloaded basemap confirmed')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('saved-basemap-offline-390x844.png') });
 });
 
 test('map completion and regional evidence failure remain separate outcomes', async ({
@@ -194,4 +204,34 @@ test('map completion and regional evidence failure remain separate outcomes', as
   });
   controlled.releasePlanet();
   controlled.releaseZoomOne();
+  await button(page, /^Close dialog$/).click();
+  await page.getByRole('tab', { name: 'Saved', exact: true }).click();
+  await button(page, 'Delete map').click();
+  await page.evaluate(() => {
+    const original = CacheStorage.prototype.delete;
+    CacheStorage.prototype.delete = async function (key) {
+      const removed = await original.call(this, key);
+      if (key.startsWith('anchorbuddy-world-map-v1-')) {
+        CacheStorage.prototype.delete = original;
+        throw new Error('Controlled failure after map files were removed');
+      }
+      return removed;
+    };
+  });
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete map', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Controlled failure after map files');
+  await button(page, 'Keep it').click();
+  await expect(page.getByText(/Removal incomplete · unavailable/)).toBeVisible();
+  await expect(button(page, /^Open map$/)).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('tab', { name: 'Saved', exact: true }).click();
+  await expect(page.getByText(/Removal incomplete · unavailable/)).toBeVisible();
+  await expect(button(page, /^Open map$/)).toHaveCount(0);
+  await testInfo.attach('incomplete-map-removal-after-reload', {
+    body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+  });
+  await button(page, 'Delete map').click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete map', exact: true }).click();
+  await expect(page.getByText('No saved map areas', { exact: true })).toBeVisible();
+  await expect(page.locator('#saved-library-heading')).toBeFocused();
 });

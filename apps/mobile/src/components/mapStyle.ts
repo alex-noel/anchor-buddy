@@ -10,14 +10,18 @@ import {
 } from '@anchor-buddy/domain';
 import { colors as c } from '../theme';
 import { onlineWorldMapStyle } from '../lib/worldMapsCore';
+import type { ResultPresentation } from '../lib/resultPresentation';
 
 export interface ChartProps {
   pack: RegionPack;
-  assessments: Assessment[];
+  results?: ResultPresentation;
+  assessments?: readonly Assessment[];
   selectedId?: string;
+  manualAssessment?: Assessment;
   origin: Position;
   onSelect: (id: string) => void;
   onPin: (p: Position) => void;
+  onShowList?: () => void;
   onlineBasemap: boolean;
   units?: UnitSystem;
   showDepth?: boolean;

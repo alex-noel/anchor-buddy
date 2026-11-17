@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View } from 'react-native';
 import * as maplibregl from 'maplibre-gl';
 import type { StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -13,146 +13,208 @@ import {
 } from './mapStyle';
 import { colors as c } from '../theme';
 import { useChartStyle } from './useChartStyle';
+import { ChartNotice, useChartLoad } from './ChartNotice';
+import { ChartLegend } from './ChartLegend';
+import { createResultPresentation, markerLabel, markerText } from '../lib/resultPresentation';
+
+type SourceEvent = { sourceId?: string; tile?: { tileID?: { key?: string } } };
+const sourceResource = (event: SourceEvent) => ({
+  sourceId: event.sourceId,
+  tileKey: event.tile?.tileID?.key,
+});
+
 export default function Chart(props: ChartProps) {
   const div = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const styleReady = useRef(false);
+  const appliedStyle = useRef<StyleSpecification | null>(null);
+  const retryCamera = useRef<maplibregl.CameraOptions | null>(null);
   const scaleControl = useRef<maplibregl.ScaleControl | null>(null);
   const refs = useRef(props);
   refs.current = props;
-  const base = useChartStyle(props.pack, props.onlineBasemap);
+  const [attempt, setAttempt] = useState(0);
+  const { load, signal } = useChartLoad(attempt);
+  const base = useChartStyle(props.pack, props.onlineBasemap, attempt);
+  const results = useMemo(
+    () =>
+      props.results ??
+      createResultPresentation(props.assessments ?? [], props.selectedId, props.manualAssessment),
+    [props.results, props.assessments, props.selectedId, props.manualAssessment],
+  );
+  const selected = results.selected?.assessment;
+  const revealedPosition = results.selectedBeyondLimit ? selected?.candidate.position : undefined;
+  const style = useMemo(
+    () =>
+      buildMapStyle(
+        props.pack,
+        selected,
+        props.onlineBasemap,
+        props.showDepth,
+        base.style,
+        props.showBedding,
+        props.searchRadiusNm ? { origin: props.origin, radiusNm: props.searchRadiusNm } : undefined,
+        props.showMarks,
+      ) as StyleSpecification,
+    [
+      props.pack,
+      selected,
+      props.onlineBasemap,
+      props.showDepth,
+      base.style,
+      props.showBedding,
+      props.origin,
+      props.searchRadiusNm,
+      props.showMarks,
+    ],
+  );
+  const styleRef = useRef(style);
+  styleRef.current = style;
   const markers = useRef<maplibregl.Marker[]>([]);
   const evidenceMarkers = useRef<maplibregl.Marker[]>([]);
-  const [error, setError] = useState('');
-  const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [view, setView] = useState({
     zoom: radiusZoom(props.origin, props.searchRadiusNm, props.initialZoom),
     bearing: 0,
     pitch: 0,
   });
   useEffect(() => {
-    if (!div.current) return;
+    const container = div.current;
+    if (!container) return;
+    let m: maplibregl.Map | undefined;
+    let observer: ResizeObserver | undefined;
     try {
       maplibregl.setWorkerUrl(`/maplibre/${maplibregl.getVersion()}/maplibre-gl-worker.mjs`);
-      const m = new maplibregl.Map({
-        container: div.current,
-        style: buildMapStyle(
-          refs.current.pack,
-          undefined,
-          refs.current.onlineBasemap,
-          refs.current.showDepth,
-          null,
-          refs.current.showBedding,
-          refs.current.searchRadiusNm
-            ? { origin: refs.current.origin, radiusNm: refs.current.searchRadiusNm }
-            : undefined,
-          refs.current.showMarks,
-        ) as StyleSpecification,
-        center: refs.current.origin,
+      const { origin, searchRadiusNm, initialZoom, units } = refs.current;
+      const fit = () => ({
+        center: origin,
         zoom: radiusZoom(
-          refs.current.origin,
-          refs.current.searchRadiusNm,
-          refs.current.initialZoom,
-          mapFitDiameter(div.current.clientWidth, div.current.clientHeight),
+          origin,
+          searchRadiusNm,
+          initialZoom,
+          mapFitDiameter(container.clientWidth, container.clientHeight),
         ),
+      });
+      const restored = retryCamera.current;
+      const instance = new maplibregl.Map({
+        container,
+        style: styleRef.current,
+        ...(restored ?? fit()),
         minZoom: 2,
         maxZoom: 18,
+        trackResize: false,
         attributionControl: { compact: true },
       });
-      map.current = m;
-      const ready = () => {
-        styleReady.current = true;
-      };
-      m.on('style.load', ready);
+      m = instance;
+      map.current = instance;
+      appliedStyle.current = styleRef.current;
+      let needsFirstFit = !restored && (!container.clientWidth || !container.clientHeight);
       const resize = () => {
-        if (!div.current) return;
-        const width = div.current.clientWidth,
-          height = div.current.clientHeight;
-        // Hidden planner tabs retain their last viewport and the user's camera position.
-        if (width <= 0 || height <= 0) return;
-        m.resize();
-        setViewport((previous) =>
-          previous.width === width && previous.height === height ? previous : { width, height },
-        );
+        if (!container.clientWidth || !container.clientHeight) return;
+        instance.resize();
+        if (needsFirstFit) {
+          needsFirstFit = false;
+          instance.jumpTo(fit());
+        }
       };
-      const observer = new ResizeObserver(resize);
-      observer.observe(div.current);
+      observer = new ResizeObserver(resize);
+      observer.observe(container);
       resize();
-      m.on('moveend', () =>
-        setView({ zoom: m.getZoom(), bearing: m.getBearing(), pitch: m.getPitch() }),
-      );
-      m.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
-      scaleControl.current = new maplibregl.ScaleControl({
-        unit: refs.current.units ?? 'nautical',
+
+      instance.on('style.load', () => {
+        if (map.current !== instance) return;
+        styleReady.current = true;
+        if (appliedStyle.current !== styleRef.current) {
+          appliedStyle.current = styleRef.current;
+          instance.setStyle(styleRef.current, { diff: true });
+        }
       });
-      m.addControl(scaleControl.current, 'bottom-left');
-      m.on('contextmenu', (e) => refs.current.onPin([e.lngLat.lng, e.lngLat.lat]));
-      m.on('click', (e) => {
+      instance.on('idle', () => {
+        if (map.current !== instance || !styleReady.current) return;
+        signal({
+          type: 'sourcesDisplayed',
+          ids: new Set(Object.keys(instance.getStyle().sources)),
+        });
+        signal({ type: 'rendered' });
+      });
+      instance.on('sourcedata', (event) => {
+        if (map.current !== instance) return;
+        // "Idle" and isSourceLoaded also include failed requests. Match actual content.
+        if (event.tile?.state === 'loaded' || (!event.tile && event.sourceDataType === 'content'))
+          signal({ type: 'sourceRecovered', source: sourceResource(event) });
+      });
+      instance.on('error', (event) => {
+        if (map.current !== instance) return;
+        const resource = sourceResource(event as typeof event & SourceEvent);
+        if (resource.sourceId || styleReady.current)
+          signal({ type: 'sourceFailed', source: resource });
+        else signal({ type: 'rendererFailed' });
+      });
+      instance.on('webglcontextlost', () => {
+        if (map.current !== instance) return;
+        styleReady.current = false;
+        signal({ type: 'rendererFailed' });
+      });
+      instance.on('webglcontextrestored', () => {
+        if (map.current === instance) signal({ type: 'start' });
+      });
+      instance.on('moveend', () =>
+        setView({
+          zoom: instance.getZoom(),
+          bearing: instance.getBearing(),
+          pitch: instance.getPitch(),
+        }),
+      );
+      instance.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
+      scaleControl.current = new maplibregl.ScaleControl({ unit: units ?? 'nautical' });
+      instance.addControl(scaleControl.current, 'bottom-left');
+      instance.on('contextmenu', (e) => refs.current.onPin([e.lngLat.lng, e.lngLat.lat]));
+      instance.on('click', (e) => {
         if (refs.current.selectOnTap) refs.current.onPin([e.lngLat.lng, e.lngLat.lat]);
       });
-      m.on('dblclick', (e) => {
+      instance.on('dblclick', (e) => {
         e.preventDefault();
         refs.current.onPin([e.lngLat.lng, e.lngLat.lat]);
       });
-      m.on('error', () =>
-        setError('Some online map detail is unavailable. Saved map coverage remains visible.'),
-      );
-      return () => {
-        observer.disconnect();
-        markers.current.forEach((x) => x.remove());
-        evidenceMarkers.current.forEach((x) => x.remove());
-        m.remove();
-        map.current = null;
-        scaleControl.current = null;
-        styleReady.current = false;
-      };
     } catch {
-      setError(
-        'Map rendering unavailable on this device. Use the list to explore and enter an anchor position in the planner.',
-      );
+      observer?.disconnect();
+      map.current = null;
+      m?.remove();
+      signal({ type: 'rendererFailed' });
+      return;
     }
-  }, []);
+    return () => {
+      observer?.disconnect();
+      markers.current.forEach((marker) => marker.remove());
+      evidenceMarkers.current.forEach((marker) => marker.remove());
+      map.current = null;
+      m?.remove();
+      scaleControl.current = null;
+      styleReady.current = false;
+      appliedStyle.current = null;
+    };
+  }, [attempt, signal]);
+
+  const retry = () => {
+    const instance = map.current;
+    if (instance) {
+      retryCamera.current = {
+        center: instance.getCenter(),
+        zoom: instance.getZoom(),
+        bearing: instance.getBearing(),
+        pitch: instance.getPitch(),
+      };
+    }
+    signal({ type: 'start' });
+    setAttempt((previous) => previous + 1);
+  };
   useEffect(() => {
     scaleControl.current?.setUnit(props.units ?? 'nautical');
   }, [props.units]);
   useEffect(() => {
-    const m = map.current;
-    if (!m) return;
-    // isStyleLoaded also waits for source data. style.load may already have fired
-    // while a source is pending, so waiting for it here can discard an offline style.
-    const update = () =>
-      m.setStyle(
-        buildMapStyle(
-          props.pack,
-          props.assessments.find((a) => a.id === props.selectedId),
-          props.onlineBasemap,
-          props.showDepth,
-          base,
-          props.showBedding,
-          props.searchRadiusNm
-            ? { origin: props.origin, radiusNm: props.searchRadiusNm }
-            : undefined,
-          props.showMarks,
-        ) as StyleSpecification,
-        { diff: true },
-      );
-    if (styleReady.current) update();
-    else m.once('style.load', update);
-    return () => {
-      m.off('style.load', update);
-    };
-  }, [
-    props.pack,
-    props.selectedId,
-    props.assessments,
-    props.onlineBasemap,
-    props.showDepth,
-    props.showBedding,
-    props.showMarks,
-    props.searchRadiusNm,
-    props.origin,
-    base,
-  ]);
+    if (!styleReady.current || appliedStyle.current === style) return;
+    appliedStyle.current = style;
+    map.current?.setStyle(style, { diff: true });
+  }, [style]);
+
   useEffect(() => {
     const m = map.current;
     if (!m) return;
@@ -164,9 +226,9 @@ export default function Chart(props: ChartProps) {
       view.pitch,
       [
         { position: props.origin, radiusPx: 12 },
-        ...props.assessments.slice(0, 50).map((assessment) => ({
-          position: assessment.candidate.position,
-          radiusPx: assessment.id === props.selectedId ? 23 : 20,
+        ...results.markers.map((marker) => ({
+          position: marker.assessment.candidate.position,
+          radiusPx: marker.selected ? 25 : 22,
         })),
         ...((props.showMarks ?? true) ? (props.pack.marks ?? []) : []).map((mark) => ({
           position: mark.position,
@@ -213,37 +275,43 @@ export default function Chart(props: ChartProps) {
     props.showDepth,
     props.showBedding,
     props.showMarks,
-    props.assessments,
-    props.selectedId,
+    results.markers,
     props.origin,
     view,
+    attempt,
   ]);
   useEffect(() => {
     const m = map.current;
     if (!m) return;
     markers.current.forEach((x) => x.remove());
-    markers.current = props.assessments.slice(0, 50).map((a, i) => {
+    markers.current = results.markers.map((marker) => {
+      const { assessment, selected, status } = marker;
       const el = document.createElement('button');
-      el.setAttribute('aria-label', `Select ${a.candidate.name}`);
-      el.title = a.candidate.name;
-      const active = a.id === props.selectedId;
-      const color = a.status === 'passes' ? c.green : a.status === 'excluded' ? c.red : c.muted;
-      el.style.cssText = `width:${active ? 40 : 32}px;height:${active ? 40 : 32}px;border:3px solid white;border-radius:50%;background:${active ? c.orange : color};color:white;font:600 12px system-ui;box-shadow:0 3px 12px #153b3b35;cursor:pointer;`;
-      el.textContent = a.candidate.kind === 'generated' ? '·' : String(i + 1);
-      el.onclick = (e) => {
-        e.stopPropagation();
-        refs.current.onSelect(a.id);
+      const label = markerLabel(marker);
+      el.type = 'button';
+      el.setAttribute('aria-label', `Select ${label}`);
+      el.setAttribute('aria-pressed', String(selected));
+      el.title = label;
+      const outline = selected ? `0 0 0 3px ${c.action}, ` : '';
+      el.style.cssText = `width:44px;height:44px;border:3px solid white;border-radius:50%;background:${status.color};color:white;font:600 12px system-ui;box-shadow:${outline}0 3px 12px #153b3b35;cursor:pointer;z-index:${selected ? 1 : 0};`;
+      el.textContent = markerText(marker);
+      el.onclick = (event) => {
+        event.stopPropagation();
+        refs.current.onSelect(assessment.id);
       };
-      return new maplibregl.Marker({ element: el }).setLngLat(a.candidate.position).addTo(m);
+      return new maplibregl.Marker({ element: el })
+        .setLngLat(assessment.candidate.position)
+        .addTo(m);
     });
     const boat = document.createElement('div');
     boat.style.cssText =
-      'width:17px;height:17px;background:#286B90;border:4px solid white;border-radius:50%;box-shadow:0 0 0 9px #397b9225';
+      'width:17px;height:17px;background:#286B90;border:4px solid white;border-radius:50%;box-shadow:0 0 0 9px #397b9225;pointer-events:none';
     boat.title = 'Search origin';
     markers.current.push(new maplibregl.Marker({ element: boat }).setLngLat(props.origin).addTo(m));
-  }, [props.assessments, props.selectedId, props.origin]);
+  }, [results.markers, props.origin, attempt]);
   useEffect(() => {
-    if (!viewport.width || !viewport.height) return;
+    const container = div.current;
+    if (!container) return;
     map.current?.easeTo({
       center: props.origin,
       ...(props.searchRadiusNm
@@ -252,31 +320,29 @@ export default function Chart(props: ChartProps) {
               props.origin,
               props.searchRadiusNm,
               props.initialZoom,
-              mapFitDiameter(viewport.width, viewport.height),
+              mapFitDiameter(container.clientWidth, container.clientHeight),
             ),
           }
         : {}),
       duration: 500,
     });
-  }, [props.origin[0], props.origin[1], props.searchRadiusNm, viewport.width, viewport.height]);
+  }, [props.origin[0], props.origin[1], props.searchRadiusNm]);
+  useEffect(() => {
+    if (revealedPosition) map.current?.easeTo({ center: revealedPosition, duration: 300 });
+  }, [revealedPosition?.[0], revealedPosition?.[1]]);
   return (
     <View style={{ flex: 1, minHeight: 0, backgroundColor: c.ocean }}>
-      <div ref={div} style={{ position: 'absolute', inset: 0 }} />
-      {error ? (
-        <View
-          style={{
-            position: 'absolute',
-            bottom: 45,
-            left: 16,
-            right: 16,
-            padding: 10,
-            backgroundColor: '#FFFFFFED',
-            borderRadius: 8,
-          }}
-        >
-          <Text style={{ fontSize: 11, color: c.muted }}>{error}</Text>
-        </View>
-      ) : null}
+      <View style={{ flex: 1, minHeight: 100 }}>
+        <div key={attempt} ref={div} style={{ position: 'absolute', inset: 0 }} />
+      </View>
+      <ChartLegend results={results} />
+      <ChartNotice
+        load={load}
+        online={props.onlineBasemap}
+        cached={base.cached}
+        onRetry={retry}
+        onShowList={props.onShowList}
+      />
     </View>
   );
 }

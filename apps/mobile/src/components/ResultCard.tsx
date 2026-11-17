@@ -4,6 +4,7 @@ import type { Assessment, UnitSystem } from '@anchor-buddy/domain';
 import { colors as c, textScale } from '../theme';
 import { Icon, type IconName } from './ui';
 import { depth, distance, money } from '../lib/units';
+import { assessmentStatus, markerLabel, type RankedResult } from '../lib/resultPresentation';
 export const kindNames: Record<string, string> = {
   marina: 'Marina',
   dock: 'Public dock',
@@ -18,15 +19,8 @@ export const kindIcons: Record<string, IconName> = {
   anchorage: 'anchor',
   generated: 'navigation',
 };
-function statusPresentation(status: Assessment['status']) {
-  if (status === 'passes')
-    return { label: 'Checks pass', icon: 'check-circle' as const, color: c.success };
-  if (status === 'excluded')
-    return { label: 'Excluded', icon: 'x-circle' as const, color: c.error };
-  return { label: 'Needs more evidence', icon: 'alert-circle' as const, color: c.neutral };
-}
 export function StatusBadge({ assessment: a }: { assessment: Assessment }) {
-  const presentation = statusPresentation(a.status);
+  const presentation = assessmentStatus(a.status);
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
       <Icon name={presentation.icon} size={15} color={presentation.color} />
@@ -43,32 +37,21 @@ export function StatusBadge({ assessment: a }: { assessment: Assessment }) {
   );
 }
 export default function ResultCard({
-  assessment: a,
-  selected,
+  result,
   onSelect,
   units,
-  index,
 }: {
-  assessment: Assessment;
-  selected: boolean;
+  result: RankedResult;
   onSelect: () => void;
   units: UnitSystem;
-  index: number;
 }) {
-  const status = statusPresentation(a.status);
+  const { assessment: a, selected, rank } = result;
   const leadingReason = a.reasons[0]?.message;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ selected }}
-      accessibilityLabel={[
-        a.candidate.name,
-        kindNames[a.candidate.kind],
-        status.label,
-        leadingReason,
-      ]
-        .filter(Boolean)
-        .join('. ')}
+      accessibilityLabel={`${markerLabel(result)} ${kindNames[a.candidate.kind]}${leadingReason ? `. ${leadingReason}` : ''}`}
       accessibilityHint="Opens place details."
       onPress={onSelect}
       style={[s.card, selected && s.selected]}
@@ -84,7 +67,7 @@ export default function ResultCard({
           </Text>
         </View>
         <Text style={{ fontSize: 11, color: c.muted, paddingTop: 2 }}>
-          {String(index + 1).padStart(2, '0')}
+          {String(rank).padStart(2, '0')}
         </Text>
       </View>
       <StatusBadge assessment={a} />
