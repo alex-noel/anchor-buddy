@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { Keyboard, Linking, Pressable, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Keyboard, Linking, Pressable, Text, View, type TextInput } from 'react-native';
 import {
   getPreferredBeddings,
   CANONICAL_CONVERSIONS,
@@ -23,9 +23,9 @@ import { parseInputDecimal } from '../lib/inputNumbers';
 import {
   equipmentChanged,
   moveStayArrival,
+  partitionFormErrors,
   parseUnitDraft,
   readCoordinateDraft,
-  readableFormErrors,
   withDefaultStayDuration,
 } from '../lib/formDrafts';
 import LocalDateHourField from './LocalDateHourField';
@@ -70,6 +70,59 @@ function numericUnit(key: NumericKey, units: UnitSystem) {
 function formatted(value: number) {
   return String(Number(value.toFixed(2)));
 }
+
+function useDirtyDraft(values: readonly unknown[]) {
+  const snapshot = JSON.stringify(values);
+  const [initial] = useState(snapshot);
+  return snapshot !== initial;
+}
+
+function useInvalidFields<Key extends string>(order: readonly Key[]) {
+  type Errors = Partial<Record<Key, string>>;
+  const inputs = useRef<Partial<Record<Key, React.ComponentRef<typeof TextInput> | null>>>({});
+  const [messages, setMessages] = useState<Errors>({});
+  const [focus, setFocus] = useState<{ key: Key }>();
+  useEffect(() => {
+    if (focus) inputs.current[focus.key]?.focus();
+  }, [focus]);
+  return {
+    props(key: Key) {
+      return {
+        error: messages[key],
+        inputRef: (node: React.ComponentRef<typeof TextInput> | null) => {
+          inputs.current[key] = node;
+        },
+      };
+    },
+    clear(key: Key) {
+      if (messages[key]) setMessages((previous) => ({ ...previous, [key]: undefined }));
+    },
+    report(domainErrors: string[], local: Errors = {}) {
+      const { fields, summary } = partitionFormErrors(domainErrors);
+      const next = { ...local };
+      for (const [key, errors] of Object.entries(fields)) {
+        if (order.includes(key as Key)) next[key as Key] = errors.join(' ');
+        else summary.push(...errors);
+      }
+      setMessages(next);
+      const first = order.find((key) => next[key]);
+      setFocus(first === undefined ? undefined : { key: first });
+      return summary.join(' ');
+    },
+  };
+}
+
+const searchFieldOrder = ['latitude', 'longitude', ...numericKeys, 'stayHours'] as const;
+const vesselFieldOrder = [
+  'name',
+  'lengthM',
+  'beamM',
+  'loadedDraftM',
+  'displacementKg',
+  'airDraftM',
+  'usableLengthM',
+  'bowRollerHeightM',
+] as const;
 
 export function SearchSheet({
   search,
@@ -153,10 +206,23 @@ export function SearchSheet({
   );
   const [coordinatesOpen, setCoordinatesOpen] = useState(!pack);
   const [error, setError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const invalid = useInvalidFields(searchFieldOrder);
   const valueInBaseUnits = (key: NumericKey) => {
     const ratio = numericUnit(key, units).ratio;
     return parseUnitDraft(values[key], numericReference.current[key], ratio);
   };
+  const dirty = useDirtyDraft([
+    values,
+    numericKeys.map(valueInBaseUnits),
+    lat,
+    lon,
+    areaConfirmed && Boolean(lat || lon),
+    selectedArea,
+    visitMode,
+    bedding,
+    ...(mode === 'search' ? [arrival, departure, locationQuery] : [stayHours]),
+  ]);
   const radius = valueInBaseUnits('maxDistanceNm');
   const liveRadius = pack?.validation.status !== 'reviewed' && (mode === 'defaults' || !offline);
   const minRadius = liveRadius ? 0.25 : 0.01;
@@ -168,6 +234,8 @@ export function SearchSheet({
     setLat(p[1].toFixed(6));
     setLon(p[0].toFixed(6));
     setSelectedArea(undefined);
+    invalid.clear('latitude');
+    invalid.clear('longitude');
   };
   const findLocation = async () => {
     if (!onFindLocation || !locationQuery.trim() || offline) return;
@@ -201,9 +269,12 @@ export function SearchSheet({
       required
       value={values[key]}
       help={help}
+      disabled={saving}
+      {...invalid.props(key)}
       onChange={(v) => {
         setValues((p) => ({ ...p, [key]: v }));
         setError('');
+        invalid.clear(key);
       }}
     />
   );
@@ -218,10 +289,12 @@ export function SearchSheet({
       maxDistanceNm: formatted(nextRadius * numericUnit('maxDistanceNm', units).ratio),
     }));
     setError('');
+    invalid.clear('maxDistanceNm');
   };
   const save = async () => {
     if (saveLock.current) return;
     if (mode === 'search' && !areaConfirmed) {
+      invalid.report([]);
       setError(
         'Choose a coastal region, find a location, or enter your coordinates before searching.',
       );
@@ -229,15 +302,28 @@ export function SearchSheet({
     }
     if (mode === 'search' && !position) {
       setCoordinatesOpen(true);
+      const latitude = parseInputDecimal(lat);
+      const longitude = parseInputDecimal(lon);
       setError(
-        'Enter a complete latitude from −85 to 85 and longitude from −180 to 180, in decimal degrees.',
+        invalid.report([], {
+          latitude:
+            Number.isFinite(latitude) && Math.abs(latitude) <= 85
+              ? undefined
+              : 'Enter latitude from −85 to 85 in decimal degrees.',
+          longitude:
+            Number.isFinite(longitude) && Math.abs(longitude) <= 180
+              ? undefined
+              : 'Enter longitude from −180 to 180 in decimal degrees.',
+        }),
       );
       return;
     }
     if (!Number.isFinite(radius) || radius < minRadius || radius > maxRadius) {
       const unit = numericUnit('maxDistanceNm', units);
       setError(
-        `Search radius must be between ${formatted(minRadius * unit.ratio)} and ${formatted(maxRadius * unit.ratio)} ${unit.label}${liveRadius ? ' for live sources' : ''}.`,
+        invalid.report([], {
+          maxDistanceNm: `Search radius must be between ${formatted(minRadius * unit.ratio)} and ${formatted(maxRadius * unit.ratio)} ${unit.label}${liveRadius ? ' for live sources' : ''}.`,
+        }),
       );
       return;
     }
@@ -262,18 +348,24 @@ export function SearchSheet({
         next = withDefaultStayDuration(next, stayHours);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Choose a valid stay window.');
+      const message = e instanceof Error ? e.message : 'Choose a valid stay window.';
+      setError(
+        mode === 'defaults'
+          ? invalid.report([], { stayHours: message })
+          : invalid.report([message]),
+      );
       return;
     }
     const errors = validateSearch(next);
     if (errors.length) {
-      setError(readableFormErrors(errors));
+      setError(invalid.report(errors));
       return;
     }
     saveLock.current = true;
     Keyboard.dismiss();
     setSaving(true);
     setError('');
+    setSaveError('');
     try {
       await onSave(
         next,
@@ -283,7 +375,9 @@ export function SearchSheet({
       );
       onClose();
     } catch (e) {
-      setError('Could not save on this device: ' + (e instanceof Error ? e.message : String(e)));
+      setSaveError(
+        'Could not save on this device: ' + (e instanceof Error ? e.message : String(e)),
+      );
     } finally {
       saveLock.current = false;
       setSaving(false);
@@ -292,18 +386,25 @@ export function SearchSheet({
   return (
     <Sheet
       title={mode === 'defaults' ? 'Search defaults' : 'Plan the stay'}
-      onClose={saving ? () => {} : onClose}
+      onClose={() => {
+        if (!saveLock.current) onClose();
+      }}
+      dirty={dirty}
+      pending={saving}
+      footer={
+        <>
+          {saveError || error ? <Notice tone="warning">{saveError || error}</Notice> : null}
+          <Button
+            disabled={saving}
+            onPress={() => void save()}
+            icon={mode === 'defaults' ? 'check' : 'search'}
+          >
+            {saving ? 'Saving…' : mode === 'defaults' ? 'Save defaults' : 'Search this area'}
+          </Button>
+        </>
+      }
     >
-      {saving ? (
-        <Button disabled onPress={() => {}}>
-          Saving…
-        </Button>
-      ) : null}
-      <View
-        style={{ gap: 20, display: saving ? 'none' : 'flex' }}
-        accessibilityElementsHidden={saving}
-        importantForAccessibility={saving ? 'no-hide-descendants' : 'auto'}
-      >
+      <View style={{ gap: 20 }}>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <Chip
             selected={visitMode === 'overnight'}
@@ -466,11 +567,14 @@ export function SearchSheet({
                   required
                   help="Decimal degrees, −85 to 85; south is negative."
                   value={lat}
+                  disabled={saving}
+                  {...invalid.props('latitude')}
                   onChange={(value) => {
                     setLat(value);
                     setAreaConfirmed(true);
                     setError('');
                     setSelectedArea(undefined);
+                    invalid.clear('latitude');
                   }}
                 />
                 <Field
@@ -479,11 +583,14 @@ export function SearchSheet({
                   required
                   help="Decimal degrees, −180 to 180; west is negative."
                   value={lon}
+                  disabled={saving}
+                  {...invalid.props('longitude')}
                   onChange={(value) => {
                     setLon(value);
                     setAreaConfirmed(true);
                     setError('');
                     setSelectedArea(undefined);
+                    invalid.clear('longitude');
                   }}
                 />
               </View>
@@ -549,9 +656,12 @@ export function SearchSheet({
             required
             suffix="hours"
             value={stayHours}
+            disabled={saving}
+            {...invalid.props('stayHours')}
             onChange={(value) => {
               setStayHours(value);
               setError('');
+              invalid.clear('stayHours');
             }}
             help="1–168 hours. Each new search starts at the next local hour and uses this duration; you can adjust its dates."
           />
@@ -648,10 +758,6 @@ export function SearchSheet({
             </Text>
           </Pressable>
         </View>
-        {error ? <Notice tone="warning">{error}</Notice> : null}
-        <Button disabled={saving} onPress={save} icon={mode === 'defaults' ? 'check' : 'search'}>
-          {mode === 'defaults' ? 'Save defaults' : 'Search this area'}
-        </Button>
       </View>
     </Sheet>
   );
@@ -698,6 +804,8 @@ export function ProfileSheet({
   const saveLock = useRef(false);
   const [v, setV] = useState(() => JSON.parse(JSON.stringify(vessel)) as VesselProfile);
   const [error, setError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const invalid = useInvalidFields(vesselFieldOrder);
   const lengthRatio = units === 'imperial' ? feetPerMetre : 1;
   const massRatio = units === 'imperial' ? 1 / CANONICAL_CONVERSIONS.kilogramsPerPound : 1;
   const lengthUnit = units === 'imperial' ? 'ft' : 'm';
@@ -722,7 +830,12 @@ export function ProfileSheet({
       ]),
     ),
   );
-  const number = (key: string, label: string, help?: string) => (
+  const dirty = useDirtyDraft([v, dimensions]);
+  const number = (
+    key: Exclude<(typeof vesselFieldOrder)[number], 'name'>,
+    label: string,
+    help?: string,
+  ) => (
     <Field
       key={key}
       label={label}
@@ -731,9 +844,12 @@ export function ProfileSheet({
       numeric
       required={key !== 'airDraftM'}
       help={help}
+      disabled={saving}
+      {...invalid.props(key)}
       onChange={(x) => {
         setDimensions((p) => ({ ...p, [key]: x }));
         setError('');
+        invalid.clear(key);
       }}
     />
   );
@@ -749,18 +865,31 @@ export function ProfileSheet({
     if (equipmentChanged(vessel, next)) next.anchor.scopeGuidance = null;
     const errors = validateVessel(next);
     if (errors.length) {
-      setError(readableFormErrors(errors));
+      const local: Partial<Record<(typeof vesselFieldOrder)[number], string>> = {};
+      const summary = errors.filter((message) => {
+        if (message === 'Vessel name is required.') local.name = message;
+        else if (message.startsWith('Air draft must')) local.airDraftM = message;
+        else if (message.startsWith('Usable rode must')) local.usableLengthM = message;
+        else if (message.startsWith('Bow roller height must')) local.bowRollerHeightM = message;
+        else if (message.startsWith('Beam cannot exceed')) local.beamM = message;
+        else return true;
+        return false;
+      });
+      setError(invalid.report(summary, local));
       return;
     }
     saveLock.current = true;
     Keyboard.dismiss();
     setSaving(true);
     setError('');
+    setSaveError('');
     try {
       await onSave(next);
       onClose();
     } catch (e) {
-      setError('Could not save on this device: ' + (e instanceof Error ? e.message : String(e)));
+      setSaveError(
+        'Could not save on this device: ' + (e instanceof Error ? e.message : String(e)),
+      );
     } finally {
       saveLock.current = false;
       setSaving(false);
@@ -784,28 +913,38 @@ export function ProfileSheet({
   });
   const knownType = anchorOptions.some((option) => option.value === v.anchor.type);
   return (
-    <Sheet title={title} onClose={saving ? () => {} : onClose}>
-      {saving ? (
-        <Button disabled onPress={() => {}}>
-          Saving…
-        </Button>
-      ) : null}
-      <View
-        style={{ gap: 20, display: saving ? 'none' : 'flex' }}
-        accessibilityElementsHidden={saving}
-        importantForAccessibility={saving ? 'no-hide-descendants' : 'auto'}
-      >
+    <Sheet
+      title={title}
+      onClose={() => {
+        if (!saveLock.current) onClose();
+      }}
+      dirty={dirty}
+      pending={saving}
+      footer={
+        <>
+          {saveError || error ? <Notice tone="warning">{saveError || error}</Notice> : null}
+          <Button disabled={saving} icon="check" onPress={() => void save()}>
+            {saving ? 'Saving…' : saveLabel}
+          </Button>
+        </>
+      }
+    >
+      <View style={{ gap: 20 }}>
         <Field
           label="Vessel name"
           required
           value={v.name}
+          disabled={saving}
+          {...invalid.props('name')}
           onChange={(name) => {
             setV((p) => ({ ...p, name }));
             setError('');
+            invalid.clear('name');
           }}
         />
         <SelectField
           label="Vessel type"
+          disabled={saving}
           help="For a sailing or powered multihull, choose Catamaran or Trimaran so beam and tariff checks use its hull type."
           value={v.type}
           options={[
@@ -832,6 +971,7 @@ export function ProfileSheet({
         <Eyebrow>Anchoring equipment</Eyebrow>
         <SelectField
           label="Anchor design"
+          disabled={saving}
           required
           value={v.anchor.type}
           options={
@@ -853,6 +993,7 @@ export function ProfileSheet({
         />
         <SelectField
           label="Rode configuration"
+          disabled={saving}
           value={v.anchor.rodeType}
           options={[
             { value: 'chain', label: 'All chain' },
@@ -879,10 +1020,6 @@ export function ProfileSheet({
             ? 'Boat or equipment changes require reviewed scope guidance before anchoring assessments can pass. Choosing a design does not select a safe scope ratio.'
             : `Current scope guidance: ${vessel.anchor.scopeGuidance.ratio}:1 within its published operating limits. See result evidence for its source and review status.`}
         </Text>
-        {error ? <Notice tone="warning">{error}</Notice> : null}
-        <Button disabled={saving} icon="check" onPress={save}>
-          {saveLabel}
-        </Button>
       </View>
     </Sheet>
   );

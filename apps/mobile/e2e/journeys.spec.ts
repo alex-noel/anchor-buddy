@@ -141,6 +141,7 @@ test('search drafts and requests can be cancelled, then a saved search reopens a
     await expect(page.getByText(/Choose a coastal region, find a location/)).toBeVisible();
     await enterSearchArea(page);
     await button(page, 'Close dialog').click();
+    await button(page, 'Discard').click();
     await expect(page.getByText('No active search', { exact: true })).toBeVisible();
     expect(requests).toBe(0);
 
