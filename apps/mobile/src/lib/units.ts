@@ -1,4 +1,9 @@
-import { CANONICAL_CONVERSIONS, type UnitSystem } from '@anchor-buddy/domain';
+import {
+  CANONICAL_CONVERSIONS,
+  formatPrice,
+  type FeeStatus,
+  type UnitSystem,
+} from '@anchor-buddy/domain';
 
 const feetPerMetre = 1 / CANONICAL_CONVERSIONS.metresPerFoot;
 const kilometresPerNauticalMile = CANONICAL_CONVERSIONS.kilometresPerNauticalMile;
@@ -23,16 +28,8 @@ export function wind(knots: number | null, units: UnitSystem = 'nautical', preci
       ? `${(knots * statuteMilesPerNauticalMile).toFixed(precision)} mph`
       : `${knots.toFixed(precision)} kt`;
 }
-export function money(amount: number | null, currency: string | null = 'USD') {
-  return amount === null
-    ? 'Price unknown'
-    : amount === 0
-      ? 'Free'
-      : new Intl.NumberFormat('en-US', {
-          style: 'currency',
-          currency: currency || 'USD',
-          maximumFractionDigits: 2,
-        }).format(amount);
+export function money(amount: number | null, currency?: string | null, status?: FeeStatus) {
+  return formatPrice(amount, currency, status);
 }
 export function direction(deg: number | null) {
   return deg == null ? '—' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(deg / 45) % 8];

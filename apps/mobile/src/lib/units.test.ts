@@ -5,7 +5,29 @@ import { depth, distance, money, wind, direction } from './units';
 test('unknown depth/price is never rendered as zero or free', () => {
   assert.equal(depth(null), 'Unknown');
   assert.equal(money(null), 'Price unknown');
-  assert.equal(money(0), 'Free');
+  assert.equal(money(0), 'Price unknown');
+});
+
+test('money uses explicit fee status, valid currency, and currency display precision', () => {
+  assert.equal(money(0, 'USD', 'free'), 'Free');
+  assert.equal(money(0, 'USD', 'unknown'), 'Price unknown');
+  assert.equal(
+    money(0, 'USD', 'paid'),
+    new Intl.NumberFormat('en', { style: 'currency', currency: 'USD' }).format(0),
+  );
+  assert.equal(money(25, null, 'paid'), '25 (currency unknown)');
+  assert.equal(money(25, 'US?', 'paid'), '25 (currency unknown)');
+  assert.equal(money(Number.POSITIVE_INFINITY, 'USD', 'paid'), 'Price unknown');
+
+  for (const [currency, digits] of [
+    ['JPY', 0],
+    ['USD', 2],
+    ['KWD', 3],
+  ] as const) {
+    const formatter = new Intl.NumberFormat('en', { style: 'currency', currency });
+    assert.equal(formatter.resolvedOptions().maximumFractionDigits, digits);
+    assert.equal(money(1234.5678, currency, 'paid'), formatter.format(1234.5678));
+  }
 });
 test('unit selection converts underlying SI/nautical values', () => {
   assert.equal(depth(1, 'imperial'), '3.3 ft');

@@ -55,7 +55,7 @@ export default function Details({
         <Card style={{ flex: 1, padding: 16 }}>
           <Eyebrow>ESTIMATED STAY</Eyebrow>
           <Text style={{ fontSize: 20, fontWeight: '600', color: c.ink }}>
-            {money(a.cost.total, a.cost.currency)}
+            {money(a.cost.total, a.cost.currency, a.cost.status)}
           </Text>
         </Card>
       </View>
@@ -164,7 +164,9 @@ export default function Details({
       {a.cost.items.map((item, i) => (
         <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
           <Text style={{ fontSize: 12, color: c.ink, flex: 1 }}>{item.label}</Text>
-          <Text style={{ fontSize: 12, color: c.ink }}>{money(item.amount, a.cost.currency)}</Text>
+          <Text style={{ fontSize: 12, color: c.ink }}>
+            {money(item.amount, a.cost.currency, a.cost.status)}
+          </Text>
         </View>
       ))}
       <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>

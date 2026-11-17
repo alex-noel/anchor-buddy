@@ -96,7 +96,7 @@ export default function ResultCard({
             color: a.cost.status === 'free' ? c.green : c.ink,
           }}
         >
-          {money(a.cost.total, a.cost.currency)}
+          {money(a.cost.total, a.cost.currency, a.cost.status)}
           {a.cost.total !== null && a.cost.total > 0 ? (
             <Text style={{ fontWeight: '400', fontSize: 10, color: c.muted }}> / stay</Text>
           ) : null}

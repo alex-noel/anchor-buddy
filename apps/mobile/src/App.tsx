@@ -48,6 +48,11 @@ import SettingsScreen from './screens/SettingsScreen';
 import SavedScreen from './screens/SavedScreen';
 import { getLocal, getLocalRaw, setLocal, removeLocal } from './lib/storage';
 import { createSettingsRepository } from './lib/settingsPersistence';
+import {
+  createPreferenceCommands,
+  type PreferenceKey,
+  type PreferenceStatuses,
+} from './lib/preferenceCommands';
 const settingsRepository = createSettingsRepository({
   get: getLocal,
   getRaw: getLocalRaw,
@@ -183,6 +188,19 @@ function AnchorApp() {
   const connectivity = useConnectivity();
   const offline = offlinePreference || connectivity === 'offline';
   const [layers, setLayers] = useState<MapLayers>(DEFAULT_LAYERS);
+  const [preferenceStatuses, setPreferenceStatuses] = useState<PreferenceStatuses>({});
+  const [preferenceCommands] = useState(() =>
+    createPreferenceCommands(settingsRepository.commit, (key, status) => {
+      setPreferenceStatuses((previous) => {
+        const next = { ...previous };
+        if (status) next[key] = status;
+        else delete next[key];
+        return next;
+      });
+      if (status?.state === 'error')
+        setMessage('A preference could not be saved. Retry it in Settings.');
+    }),
+  );
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedSearch[]>([]);
   const planSequence = useRef(0);
@@ -422,21 +440,26 @@ function AnchorApp() {
   const changeTab = (next: Tab) => {
     dispatch({ type: 'changeTab', tab: next });
   };
-  const savePreferences = (u: UnitSystem, o: boolean, l: MapLayers) => {
-    if (o && !offline) {
+  const changeUnits = (value: UnitSystem) => {
+    setUnits(value);
+    preferenceCommands.change('units', value);
+  };
+  const changeOffline = (value: boolean) => {
+    if (value && !offline) {
       cancelDataRequest();
       setDataLoading(false);
       setDataError('Offline mode uses downloaded evidence with its original source dates.');
     }
-    setUnits(u);
-    setOffline(o);
-    setLayers(l);
-    void settingsRepository
-      .commit({ units: u, offline: o, layers: l, language: 'en' })
-      .then((result) => {
-        if (result.status === 'failed')
-          setMessage('Could not save on this device: ' + result.error);
-      });
+    setOffline(value);
+    preferenceCommands.change('offline', value);
+  };
+  const changeLayer = (key: 'depth' | 'bedding' | 'marks', value: boolean) => {
+    setLayers((previous) => ({ ...previous, [key]: value }));
+    preferenceCommands.change(key, value);
+  };
+  const changeLayersFromSheet = (next: MapLayers) => {
+    for (const key of ['depth', 'bedding', 'marks'] as const)
+      if (next[key] !== layers[key]) changeLayer(key, next[key]);
   };
   const requireVessel = () => {
     if (vesselReady) return true;
@@ -848,10 +871,6 @@ function AnchorApp() {
       const result = await settingsRepository.commit({
         vessel,
         searchDefaults: defaults,
-        units,
-        offline: offlinePreference,
-        layers,
-        language: 'en',
         confirmed: { vessel: true, defaults: true },
       });
       if (result.status === 'failed') throw new Error(result.error);
@@ -997,10 +1016,10 @@ function AnchorApp() {
         <SettingsScreen
           pack={pack}
           units={units}
-          setUnits={(u) => savePreferences(u, offlinePreference, layers)}
+          setUnits={changeUnits}
           offline={offlinePreference}
           connectivity={connectivity}
-          setOffline={(o) => savePreferences(units, o, layers)}
+          setOffline={changeOffline}
           savedAt={savedAt}
           onSave={savePack}
           onPack={changePack}
@@ -1018,7 +1037,9 @@ function AnchorApp() {
           language="en"
           setLanguage={() => {}}
           layers={layers}
-          setLayers={(l) => savePreferences(units, offlinePreference, l)}
+          setLayer={changeLayer}
+          preferenceStatuses={preferenceStatuses}
+          onRetryPreference={(key: PreferenceKey) => preferenceCommands.retry(key)}
         />
       ) : tab === 'saved' ? (
         <SavedScreen
@@ -1515,7 +1536,7 @@ function AnchorApp() {
       !defaultsOpen ? (
         <OnboardingSheet
           units={units}
-          onUnits={(u) => savePreferences(u, offlinePreference, layers)}
+          onUnits={changeUnits}
           onEditVessel={() => setProfileOpen(true)}
           onEditDefaults={() => setDefaultsOpen(true)}
           vesselConfigured={vesselConfigured}
@@ -1597,7 +1618,7 @@ function AnchorApp() {
         <MapLayersSheet
           pack={pack}
           layers={layers}
-          onChange={(next) => savePreferences(units, offlinePreference, next)}
+          onChange={changeLayersFromSheet}
           onClose={() => setLayersOpen(false)}
         />
       ) : null}

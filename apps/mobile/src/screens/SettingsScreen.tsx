@@ -18,6 +18,11 @@ import { depth, localTime } from '../lib/units';
 import { setLocal } from '../lib/storage';
 import { providerBase } from '../lib/regionalDataCore';
 import type { Connectivity } from '../lib/connectivityCore';
+import type {
+  PreferenceKey,
+  PreferenceStatus,
+  PreferenceStatuses,
+} from '../lib/preferenceCommands';
 import { getAPIBase } from '../lib/regionalData';
 import { installPack, validateManifest, validSegment } from '../lib/packInstall';
 import { beginPackStage, downloadOfflineChart, loadInstalledChartStyle } from '../lib/packFiles';
@@ -99,6 +104,32 @@ function LayerRow({
   );
 }
 
+function PreferenceFeedback({
+  status,
+  onRetry,
+}: {
+  status?: PreferenceStatus;
+  onRetry: () => void;
+}) {
+  if (!status) return null;
+  if (status.state === 'pending')
+    return (
+      <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: c.muted }}>
+        Saving preference…
+      </Text>
+    );
+  return (
+    <View style={{ gap: 8 }}>
+      <Notice tone="warning">
+        Not saved; the selected value is in use for this session. {status.message}
+      </Notice>
+      <Button secondary small onPress={onRetry}>
+        Retry
+      </Button>
+    </View>
+  );
+}
+
 export default function SettingsScreen({
   pack,
   units,
@@ -114,7 +145,9 @@ export default function SettingsScreen({
   onTour,
   onSetup,
   layers,
-  setLayers,
+  setLayer,
+  preferenceStatuses = {},
+  onRetryPreference,
   onDownloadMap,
   onViewData,
   connectivity = 'unknown',
@@ -135,7 +168,9 @@ export default function SettingsScreen({
   language?: 'en';
   setLanguage?: (language: 'en') => void;
   layers?: MapLayerDefaults;
-  setLayers?: (layers: MapLayerDefaults) => void;
+  setLayer?: (key: 'depth' | 'bedding' | 'marks', value: boolean) => void;
+  preferenceStatuses?: PreferenceStatuses;
+  onRetryPreference: (key: PreferenceKey) => void;
   onDownloadMap?: () => void;
   onViewData?: () => void;
   connectivity?: Connectivity;
@@ -399,6 +434,10 @@ export default function SettingsScreen({
               : 'Distances in miles, depths in feet, speed in mph.'}{' '}
           Configuration fields show their own units.
         </Text>
+        <PreferenceFeedback
+          status={preferenceStatuses.units}
+          onRetry={() => onRetryPreference('units')}
+        />
         <View style={{ gap: 5 }}>
           <Text style={{ fontSize: 14, fontWeight: '600', color: c.ink }}>Language · English</Text>
           <Text style={{ fontSize: 12, color: c.muted, lineHeight: 18 }}>
@@ -406,26 +445,38 @@ export default function SettingsScreen({
           </Text>
         </View>
       </Card>
-      {layers && setLayers ? (
+      {layers && setLayer ? (
         <Card>
           <Eyebrow>MAP LAYERS</Eyebrow>
           <LayerRow
             label="Water depth"
             detail="Charted depth bounds where available, plus GEBCO global bathymetry as online display context. GEBCO does not establish clearance."
             value={layers.depth}
-            onChange={(value) => setLayers({ ...layers, depth: value })}
+            onChange={(value) => setLayer('depth', value)}
+          />
+          <PreferenceFeedback
+            status={preferenceStatuses.depth}
+            onRetry={() => onRetryPreference('depth')}
           />
           <LayerRow
             label="Seabed"
             detail="Reviewed seabed evidence where available, plus online EMODnet European substrate context. Context does not establish anchor holding or habitat permission."
             value={layers.bedding}
-            onChange={(value) => setLayers({ ...layers, bedding: value })}
+            onChange={(value) => setLayer('bedding', value)}
+          />
+          <PreferenceFeedback
+            status={preferenceStatuses.bedding}
+            onRetry={() => onRetryPreference('bedding')}
           />
           <LayerRow
             label="Marks"
             detail="Available charted marks plus OpenSeaMap community seamarks online. Display marks do not establish complete hazard coverage."
             value={layers.marks}
-            onChange={(value) => setLayers({ ...layers, marks: value })}
+            onChange={(value) => setLayer('marks', value)}
+          />
+          <PreferenceFeedback
+            status={preferenceStatuses.marks}
+            onRetry={() => onRetryPreference('marks')}
           />
           <Text style={{ fontSize: 12, color: c.muted, lineHeight: 18 }}>
             Layers change the map display. All available evidence is still included in assessments.
@@ -528,6 +579,10 @@ export default function SettingsScreen({
           detail="Prefer downloaded data even when connected; forecasts keep their expiry dates"
           value={offline}
           onChange={setOffline}
+        />
+        <PreferenceFeedback
+          status={preferenceStatuses.offline}
+          onRetry={() => onRetryPreference('offline')}
         />
         <Text style={{ fontSize: 12, lineHeight: 18, color: c.muted }}>
           {connectivity === 'offline'
