@@ -131,6 +131,9 @@ export function Field({
   help,
   required = false,
   disabled = false,
+  error,
+  invalid = false,
+  inputRef,
 }: {
   label: string;
   value: string;
@@ -141,17 +144,28 @@ export function Field({
   help?: string;
   required?: boolean;
   disabled?: boolean;
+  /** Error text is announced with the field's label, unit, and help. */
+  error?: string;
+  /** Mark invalid while an error message is being prepared or summarized elsewhere. */
+  invalid?: boolean;
+  /** Lets form owners focus this input without reaching into the rendered tree. */
+  inputRef?: React.Ref<React.ComponentRef<typeof TextInput>>;
 }) {
   const hintId = useId();
+  const errorId = useId();
   const [focused, setFocused] = useState(false);
+  const isInvalid = invalid || Boolean(error);
+  const describedBy =
+    [help ? hintId : undefined, error ? errorId : undefined].filter(Boolean).join(' ') || undefined;
   return (
     <View style={[{ flex: 1, minWidth: 130, gap: 7 }, s.fieldLayout]}>
       <Text style={s.fieldLabel}>
         {label}
         {required ? ' *' : ''}
       </Text>
-      <View style={[s.inputWrap, focused && !disabled && s.focusRing]}>
+      <View style={[s.inputWrap, isInvalid && s.inputInvalid, focused && !disabled && s.focusRing]}>
         <TextInput
+          ref={inputRef}
           accessibilityLabel={label}
           editable={!disabled}
           accessibilityState={{ disabled }}
@@ -159,15 +173,17 @@ export function Field({
             required ? 'Required.' : '',
             suffix ? `Unit: ${suffix}.` : '',
             help ?? '',
+            error ? `Error: ${error}` : '',
           ]
             .filter(Boolean)
             .join(' ')}
           aria-required={required}
-          aria-describedby={help ? hintId : undefined}
+          aria-invalid={isInvalid}
+          aria-describedby={describedBy}
           value={value}
           onChangeText={onChange}
-          onFocus={Platform.OS === 'web' ? () => setFocused(true) : undefined}
-          onBlur={Platform.OS === 'web' ? () => setFocused(false) : undefined}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           keyboardType={
             signed
               ? Platform.OS === 'ios'
@@ -192,6 +208,11 @@ export function Field({
       {help ? (
         <Text nativeID={hintId} style={s.help}>
           {help}
+        </Text>
+      ) : null}
+      {error ? (
+        <Text nativeID={errorId} accessibilityLiveRegion="polite" style={s.fieldError}>
+          {error}
         </Text>
       ) : null}
     </View>
@@ -340,6 +361,7 @@ export const s = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: c.white,
   },
+  inputInvalid: { borderColor: c.error },
   input: {
     flex: 1,
     fontSize: textScale.body,
@@ -349,6 +371,7 @@ export const s = StyleSheet.create({
     minWidth: 0,
   },
   help: { fontSize: textScale.caption, lineHeight: 17, color: c.muted },
+  fieldError: { fontSize: textScale.caption, lineHeight: 17, color: c.error },
   checkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
   check: {
     width: 21,

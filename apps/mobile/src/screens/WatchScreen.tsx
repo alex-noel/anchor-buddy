@@ -9,6 +9,7 @@ import { colors as c } from '../theme';
 import { depth } from '../lib/units';
 import { setLocal } from '../lib/storage';
 import { createPositionCapture } from '../lib/positionCapture';
+import { createAlarmTestReadiness } from '../lib/alarmTestReadiness';
 import {
   parseInputDecimal,
   createLengthDraft,
@@ -54,9 +55,11 @@ export default function WatchScreen({
   const [radiusConfirmed, setRadiusConfirmed] = useState(false);
   const [anchorConfirmed, setAnchorConfirmed] = useState(false);
   const [checklist, setChecklist] = useState(false);
-  const [tested, setTested] = useState(false);
+  const [tested, setTested] = useState<number | null>(null);
+  const [alarmReadiness] = useState(createAlarmTestReadiness);
   const [heard, setHeard] = useState(false);
   const [permissions, setPermissions] = useState(false);
+  const [permissionDetails, setPermissionDetails] = useState<Watch.WatchPermissions | null>(null);
   const [busy, setBusy] = useState(false);
   const [verified, setVerified] = useState(false);
   const [clock, setClock] = useState(elapsed());
@@ -65,6 +68,12 @@ export default function WatchScreen({
   const lastSaved = useRef('');
   const inFlight = useRef(false);
   const snapshotEpoch = useRef(0);
+  const lifecycleEpoch = useRef(0);
+  const live = useRef(true);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const setupOffset = useRef(0);
+  const formOffset = useRef(0);
+  const permissionsOffset = useRef(0);
   const [positionCapture] = useState(createPositionCapture);
   const [findingPosition, setFindingPosition] = useState(false);
   useEffect(() => () => positionCapture.cancel(), [positionCapture]);
@@ -76,11 +85,23 @@ export default function WatchScreen({
   const resetConfirmations = useCallback(() => {
     setAnchorConfirmed(false);
     setChecklist(false);
-    setTested(false);
+    alarmReadiness.reset();
+    setTested(null);
     setHeard(false);
     setPermissions(false);
+    setPermissionDetails(null);
     setRadiusConfirmed(false);
-  }, []);
+  }, [alarmReadiness]);
+  useEffect(() => {
+    if (tested === null) return;
+    const timer = setTimeout(() => {
+      if (alarmReadiness.expire(tested)) {
+        setTested(null);
+        setHeard(false);
+      }
+    }, alarmReadiness.remainingMs());
+    return () => clearTimeout(timer);
+  }, [tested, alarmReadiness]);
   const accept = useCallback(
     (next: Watch.WatchStatus) => {
       if (activeStates.has(next.state)) {
@@ -120,6 +141,7 @@ export default function WatchScreen({
 
   useEffect(() => {
     let mounted = true;
+    live.current = true;
     let query = 0;
     const refresh = async () => {
       const id = ++query;
@@ -141,7 +163,20 @@ export default function WatchScreen({
       if (mounted) accept(next);
     });
     const app = AppState.addEventListener('change', (state) => {
+      lifecycleEpoch.current++;
+      snapshotEpoch.current++;
       setVerified(false);
+      alarmReadiness.reset();
+      setTested(null);
+      setHeard(false);
+      setPermissions(false);
+      setPermissionDetails(null);
+      // iOS permission alerts temporarily make the app inactive. Only actual
+      // backgrounding cancels location capture, so its own prompt can finish.
+      if (state === 'background') {
+        positionCapture.cancel();
+        setFindingPosition(false);
+      }
       if (state === 'active') void refresh();
     });
     const timer = setInterval(() => {
@@ -150,28 +185,35 @@ export default function WatchScreen({
     }, 5_000);
     return () => {
       mounted = false;
+      live.current = false;
+      lifecycleEpoch.current++;
+      alarmReadiness.reset();
       query++;
       off();
       app.remove();
       clearInterval(timer);
     };
-  }, [accept]);
+  }, [accept, alarmReadiness, positionCapture]);
 
   const run = async (action: () => Promise<unknown>) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
+    const lifecycle = lifecycleEpoch.current;
     try {
       setError('');
       await action();
+      if (!live.current || lifecycle !== lifecycleEpoch.current) return;
       const epoch = snapshotEpoch.current;
       const next = await Watch.getStatus();
-      if (epoch === snapshotEpoch.current) accept(next);
+      if (live.current && lifecycle === lifecycleEpoch.current && epoch === snapshotEpoch.current)
+        accept(next);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (live.current && lifecycle === lifecycleEpoch.current)
+        setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       inFlight.current = false;
-      setBusy(false);
+      if (live.current) setBusy(false);
     }
   };
   const capture = async () => {
@@ -195,7 +237,32 @@ export default function WatchScreen({
   };
   const armed = status !== null && activeStates.has(status.state);
   const hasAlarm = Boolean(status?.alerts.some((alert) => !alert.acknowledged));
-  const statusIsCurrent = verified && clock - lastContact.current < 12_000;
+  const contactAge = clock - lastContact.current;
+  const statusIsCurrent =
+    verified && Number.isFinite(contactAge) && contactAge >= 0 && contactAge < 12_000;
+  const testFresh = tested !== null && alarmReadiness.fresh();
+  const coordinatesValid =
+    [parseInputDecimal(latitude), parseInputDecimal(longitude)].every(Number.isFinite) &&
+    Math.abs(parseInputDecimal(latitude)) <= 90 &&
+    Math.abs(parseInputDecimal(longitude)) <= 180;
+  const radiusValid =
+    Number.isFinite(enteredRadiusM) && enteredRadiusM >= 10 && enteredRadiusM <= 10000;
+  const latitudeError =
+    !Number.isFinite(parseInputDecimal(latitude)) || Math.abs(parseInputDecimal(latitude)) > 90
+      ? 'Enter anchor latitude between −90 and 90 degrees.'
+      : undefined;
+  const longitudeError =
+    !Number.isFinite(parseInputDecimal(longitude)) || Math.abs(parseInputDecimal(longitude)) > 180
+      ? 'Enter anchor longitude between −180 and 180 degrees.'
+      : undefined;
+  const radiusError = radiusValid
+    ? undefined
+    : `Enter an alarm radius between ${depth(10, units)} and ${depth(10000, units)}.`;
+  const goToSetup = (sound = false) =>
+    scroll.current?.scrollTo({
+      y: setupOffset.current + formOffset.current + (sound ? permissionsOffset.current : 0),
+      animated: true,
+    });
   const isLive = armed && statusIsCurrent && status?.serviceRunning;
   const title = !status
     ? 'Checking watch status'
@@ -290,6 +357,7 @@ export default function WatchScreen({
 
   return (
     <ScrollView
+      ref={scroll}
       automaticallyAdjustKeyboardInsets
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
@@ -446,169 +514,258 @@ export default function WatchScreen({
         ) : null}
       </Card>
       {!armed ? (
-        <Card>
-          <Eyebrow>1 · ANCHOR POSITION & RADIUS</Eyebrow>
-          <Notice>
-            Record the anchor at the moment it drops, or enter its verified position. Your phone
-            measures the vessel, not the anchor. A suggested map pin is only a starting point.
-          </Notice>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-            <Field
-              signed
-              label="Anchor latitude"
-              value={latitude}
-              onChange={(value) => {
-                cancelCapture();
-                setLatitude(value);
-                setAnchorConfirmed(false);
-              }}
-            />
-            <Field
-              signed
-              label="Anchor longitude"
-              value={longitude}
-              onChange={(value) => {
-                cancelCapture();
-                setLongitude(value);
-                setAnchorConfirmed(false);
-              }}
-            />
-          </View>
-          <Button
-            secondary
-            icon="crosshair"
-            disabled={busy || findingPosition || !status?.nativeAvailable}
-            onPress={() => void capture()}
-          >
-            {findingPosition ? 'Getting a current position…' : 'Capture position at anchor drop'}
-          </Button>
-          {findingPosition ? (
-            <Button secondary onPress={cancelCapture}>
-              Cancel position capture
-            </Button>
-          ) : null}
-          <Field
-            label="Alarm radius"
-            value={radiusText}
-            numeric
-            suffix={lengthInputUnit(units)}
-            onChange={(value) => {
-              setRadius(value);
-              setAnchorConfirmed(false);
+        <View
+          onLayout={(event) => {
+            setupOffset.current = event.nativeEvent.layout.y;
+          }}
+          style={{ gap: 16 }}
+        >
+          <Card>
+            <Eyebrow>Before arming</Eyebrow>
+            {!statusIsCurrent ? (
+              <Notice tone="warning">
+                Waiting for a current native connection. Arming is unavailable until it is verified.
+              </Notice>
+            ) : null}
+            {!coordinatesValid || !radiusValid || !anchorConfirmed || !checklist ? (
+              <Button secondary small onPress={() => goToSetup()}>
+                Review anchor, radius and arrival checks
+              </Button>
+            ) : null}
+            {latitudeError || longitudeError || radiusError ? (
+              <Notice tone="warning">
+                {[latitudeError, longitudeError, radiusError].filter(Boolean).join(' ')}
+              </Notice>
+            ) : null}
+            {!permissions || !testFresh || !heard ? (
+              <Button secondary small onPress={() => goToSetup(true)}>
+                {!permissions
+                  ? 'Review location and alert permissions'
+                  : !testFresh
+                    ? 'Run a fresh alarm test'
+                    : 'Confirm hearing the alarm'}
+              </Button>
+            ) : null}
+            <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19 }}>
+              {testFresh
+                ? 'Alarm test is current for this screen session.'
+                : 'A fresh native alarm test is required. Test again after returning to the app.'}
+            </Text>
+          </Card>
+          <View
+            onLayout={(event) => {
+              formOffset.current = event.nativeEvent.layout.y;
             }}
-            help="Set from your actual anchor, deployed rode and reviewed swing space; this is not a suggested safe clearance."
-          />
-          <Check
-            label="I verified the actual anchor position and alarm radius."
-            checked={anchorConfirmed}
-            onChange={setAnchorConfirmed}
-          />
-          <Check
-            label="I set and tested the anchor, checked local conditions and nearby boats, and have an exit plan."
-            checked={checklist}
-            onChange={setChecklist}
-          />
-          <View style={{ height: 1, backgroundColor: c.line, marginVertical: 4 }} />
-          <Eyebrow>2 · PERMISSIONS & ALARM TEST</Eyebrow>
-          <Button
-            secondary
-            icon="map-pin"
-            disabled={busy || !status?.nativeAvailable}
-            onPress={() =>
-              void run(async () => {
-                const permission = await Watch.requestPermissions();
-                setPermissions(permission.canArm);
-                if (!permission.canArm)
-                  throw new Error(
-                    permission.message ??
-                      'Precise location and audible notification permissions are required.',
-                  );
-              })
-            }
           >
-            {permissions ? 'Recheck permissions' : 'Allow location and alerts'}
-          </Button>
-          {status?.nativeAvailable ? (
-            <Button
-              secondary
-              small
-              onPress={() => {
-                void Linking.openSettings().catch((cause) => setError(String(cause)));
-              }}
-            >
-              Open device settings
-            </Button>
-          ) : null}
-          <Button
-            secondary
-            icon="volume-2"
-            disabled={busy || !permissions}
-            onPress={() =>
-              void run(async () => {
-                setHeard(false);
-                await Watch.testAlarm();
-                setTested(true);
-              })
-            }
-          >
-            Test alarm
-          </Button>
-          {tested ? (
-            <Check
-              label="I heard the test alarm on this device with my current sound settings."
-              checked={heard}
-              onChange={setHeard}
-            />
-          ) : null}
-          <View style={{ height: 1, backgroundColor: c.line, marginVertical: 4 }} />
-          <Eyebrow>3 · START WATCH</Eyebrow>
-          <Button
-            icon="radio"
-            disabled={
-              busy ||
-              findingPosition ||
-              !status?.nativeAvailable ||
-              !statusIsCurrent ||
-              !anchorConfirmed ||
-              !checklist ||
-              !tested ||
-              !heard ||
-              !permissions
-            }
-            onPress={() =>
-              void run(async () => {
-                const anchor = {
-                  latitude: parseInputDecimal(latitude),
-                  longitude: parseInputDecimal(longitude),
-                };
-                if (
-                  !Number.isFinite(anchor.latitude) ||
-                  !Number.isFinite(anchor.longitude) ||
-                  Math.abs(anchor.latitude) > 90 ||
-                  Math.abs(anchor.longitude) > 180
-                )
-                  throw new Error('Enter valid, verified anchor coordinates.');
-                if (
-                  !Number.isFinite(enteredRadiusM) ||
-                  enteredRadiusM < 10 ||
-                  enteredRadiusM > 10000
-                )
-                  throw new Error(
-                    `Alarm radius must be between ${depth(10, units)} and ${depth(10000, units)}.`,
-                  );
-                await Watch.arm({
-                  anchor,
-                  radiusM: enteredRadiusM,
-                  anchorConfirmed: true,
-                  checklistConfirmed: true,
-                  testAlarmConfirmed: true,
-                });
-              })
-            }
-          >
-            Arm anchor watch
-          </Button>
-        </Card>
+            <Card>
+              <Eyebrow>1 · ANCHOR POSITION & RADIUS</Eyebrow>
+              <Notice>
+                Record the anchor at the moment it drops, or enter its verified position. Your phone
+                measures the vessel, not the anchor. A suggested map pin is only a starting point.
+              </Notice>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+                <Field
+                  signed
+                  label="Anchor latitude"
+                  error={latitudeError}
+                  value={latitude}
+                  onChange={(value) => {
+                    cancelCapture();
+                    setLatitude(value);
+                    setAnchorConfirmed(false);
+                  }}
+                />
+                <Field
+                  signed
+                  label="Anchor longitude"
+                  error={longitudeError}
+                  value={longitude}
+                  onChange={(value) => {
+                    cancelCapture();
+                    setLongitude(value);
+                    setAnchorConfirmed(false);
+                  }}
+                />
+              </View>
+              <Button
+                secondary
+                icon="crosshair"
+                disabled={busy || findingPosition || !status?.nativeAvailable}
+                onPress={() => void capture()}
+              >
+                {findingPosition
+                  ? 'Getting a current position…'
+                  : 'Capture position at anchor drop'}
+              </Button>
+              {findingPosition ? (
+                <Button secondary onPress={cancelCapture}>
+                  Cancel position capture
+                </Button>
+              ) : null}
+              <Field
+                label="Alarm radius"
+                error={radiusError}
+                value={radiusText}
+                numeric
+                suffix={lengthInputUnit(units)}
+                onChange={(value) => {
+                  setRadius(value);
+                  setAnchorConfirmed(false);
+                }}
+                help="Set from your actual anchor, deployed rode and reviewed swing space; this is not a suggested safe clearance."
+              />
+              <Check
+                label="I verified the actual anchor position and alarm radius."
+                checked={anchorConfirmed}
+                onChange={setAnchorConfirmed}
+              />
+              <Check
+                label="I set and tested the anchor, checked local conditions and nearby boats, and have an exit plan."
+                checked={checklist}
+                onChange={setChecklist}
+              />
+              <View style={{ height: 1, backgroundColor: c.line, marginVertical: 4 }} />
+              <View
+                onLayout={(event) => {
+                  permissionsOffset.current = event.nativeEvent.layout.y;
+                }}
+              >
+                <Eyebrow>2 · PERMISSIONS & ALARM TEST</Eyebrow>
+              </View>
+              <Button
+                secondary
+                icon="map-pin"
+                disabled={busy || !status?.nativeAvailable}
+                onPress={() =>
+                  void run(async () => {
+                    const lifecycle = lifecycleEpoch.current;
+                    const permission = await Watch.requestPermissions();
+                    if (!live.current || lifecycle !== lifecycleEpoch.current) {
+                      if (live.current)
+                        setError(
+                          'The app changed state while checking permissions. Recheck location and alerts before arming.',
+                        );
+                      return;
+                    }
+                    setPermissionDetails(permission);
+                    setPermissions(permission.canArm);
+                    if (!permission.canArm)
+                      throw new Error(
+                        permission.message ??
+                          'Precise location and audible notification permissions are required.',
+                      );
+                  })
+                }
+              >
+                {permissions ? 'Recheck permissions' : 'Allow location and alerts'}
+              </Button>
+              {permissionDetails && !permissionDetails.canArm ? (
+                <Notice tone="warning">
+                  {[
+                    !permissionDetails.location && 'Allow location access.',
+                    !permissionDetails.precise && 'Enable precise location.',
+                    !permissionDetails.background && 'Allow background location.',
+                    !permissionDetails.notifications && 'Allow audible notifications.',
+                    permissionDetails.message,
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                </Notice>
+              ) : null}
+              {status?.nativeAvailable ? (
+                <Button
+                  secondary
+                  small
+                  onPress={() => {
+                    void Linking.openSettings().catch((cause) => setError(String(cause)));
+                  }}
+                >
+                  Open device settings
+                </Button>
+              ) : null}
+              <Button
+                secondary
+                icon="volume-2"
+                disabled={busy || !permissions}
+                onPress={() =>
+                  void run(async () => {
+                    setTested(null);
+                    setHeard(false);
+                    const ticket = alarmReadiness.begin();
+                    await Watch.testAlarm();
+                    if (alarmReadiness.complete(ticket)) setTested(ticket);
+                  })
+                }
+              >
+                {testFresh ? 'Test alarm again' : 'Test alarm'}
+              </Button>
+              {testFresh ? (
+                <Check
+                  label="I heard the test alarm on this device with my current sound settings."
+                  checked={heard}
+                  onChange={setHeard}
+                />
+              ) : null}
+              <View style={{ height: 1, backgroundColor: c.line, marginVertical: 4 }} />
+              <Eyebrow>3 · START WATCH</Eyebrow>
+              <Button
+                icon="radio"
+                disabled={
+                  busy ||
+                  findingPosition ||
+                  !coordinatesValid ||
+                  !radiusValid ||
+                  !status?.nativeAvailable ||
+                  !statusIsCurrent ||
+                  !anchorConfirmed ||
+                  !checklist ||
+                  !testFresh ||
+                  !heard ||
+                  !permissions
+                }
+                onPress={() =>
+                  void run(async () => {
+                    if (!alarmReadiness.fresh()) {
+                      setTested(null);
+                      setHeard(false);
+                      throw new Error(
+                        'The alarm test is no longer current. Run and confirm a new test before arming.',
+                      );
+                    }
+                    const anchor = {
+                      latitude: parseInputDecimal(latitude),
+                      longitude: parseInputDecimal(longitude),
+                    };
+                    if (
+                      !Number.isFinite(anchor.latitude) ||
+                      !Number.isFinite(anchor.longitude) ||
+                      Math.abs(anchor.latitude) > 90 ||
+                      Math.abs(anchor.longitude) > 180
+                    )
+                      throw new Error('Enter valid, verified anchor coordinates.');
+                    if (
+                      !Number.isFinite(enteredRadiusM) ||
+                      enteredRadiusM < 10 ||
+                      enteredRadiusM > 10000
+                    )
+                      throw new Error(
+                        `Alarm radius must be between ${depth(10, units)} and ${depth(10000, units)}.`,
+                      );
+                    await Watch.arm({
+                      anchor,
+                      radiusM: enteredRadiusM,
+                      anchorConfirmed: true,
+                      checklistConfirmed: true,
+                      testAlarmConfirmed: true,
+                    });
+                  })
+                }
+              >
+                Arm anchor watch
+              </Button>
+            </Card>
+          </View>
+        </View>
       ) : (
         <Card>
           <Eyebrow>CONFIRMED ANCHOR</Eyebrow>

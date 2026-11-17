@@ -9,6 +9,7 @@ import {
 import {
   equipmentChanged,
   moveStayArrival,
+  partitionFormErrors,
   parseUnitDraft,
   readCoordinateDraft,
   withDefaultStayDuration,
@@ -113,6 +114,19 @@ test('unit drafts use exact factors, retain untouched values, and convert edits 
     reference = parseUnitDraft(display, reference, ratio);
     assert.ok(Math.abs(reference - expectedNm) <= unitConversionTolerance(expectedNm));
   }
+});
+
+test('validation errors map known field tokens and retain unrecognized messages in the summary', () => {
+  const split = partitionFormErrors([
+    'Search maxDistanceNm must be between 0.01 and 50 nautical miles.',
+    'Vessel loadedDraftM must be positive.',
+    'Unrecognized validation detail should remain visible.',
+  ]);
+  assert.deepEqual(split.fields.maxDistanceNm, [
+    'Search radius must be between 0.01 and 50 nautical miles.',
+  ]);
+  assert.deepEqual(split.fields.loadedDraftM, ['Vessel loaded draft must be positive.']);
+  assert.deepEqual(split.summary, ['Unrecognized validation detail should remain visible.']);
 });
 
 test('moving arrival across a half-hour clock change rounds departure up instead of shortening the stay', () => {

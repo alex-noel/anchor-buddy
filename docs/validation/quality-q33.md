@@ -7,3 +7,5 @@ Watch capture has a cancellation generation separate from watch commands. Manual
 Four focused tests pass for invalid fixes, exact bounds, permission cancellation, late replies/new requests, denial and malformed acquisition. Mobile typecheck passed. A separate Terra/high review found no actionable code defect in validation, cancellation or active-session preservation.
 
 Mounted native-screen wiring and physical GPS acquisition remain unverified because this host has no runnable native build. These are explicit acceptance gaps, not inferred from helper tests; Q38 and Q36/Q37 own the required mounted/device evidence.
+
+Integrator mounted verification: actual WatchScreen in isolated native-bridge/location test harness passed delayed manual-edit/cancel/unmount, active-watch anchor preservation, valid 88° capture across inactive/active permission-prompt lifecycle. No arm call occurred. Capture cancels on actual backgrounding; temporary iOS inactivity does not discard its own location prompt. Independent second review accepted the lifecycle fix. Physical GPS acquisition remains pending Q36/Q37.
