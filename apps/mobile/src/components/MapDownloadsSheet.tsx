@@ -11,8 +11,12 @@ import {
   convertRadiusDraft,
   createRadiusDraft,
   evidenceRadiusNm,
+  mapDownloadProgressAnnouncement,
+  mapTileProgressPercent,
   radiusInputUnit,
   readRadiusDraft,
+  shouldAnnounceMapDownloadProgress,
+  type MapDownloadProgressState,
 } from '../lib/mapDownloadControls';
 import { distance } from '../lib/units';
 import { findLocations } from '../lib/regionalData';
@@ -70,14 +74,17 @@ export default function MapDownloadsSheet({
   const [selectedRegion, setSelectedRegion] = useState<MapRegionPreset | undefined>();
   const [includeEvidence, setIncludeEvidence] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<'map' | 'evidence' | null>(null);
+  const [phase, setPhase] = useState<'preparing' | 'map' | 'evidence' | null>(null);
   const [evidenceFailed, setEvidenceFailed] = useState(false);
+  const [evidenceCompleted, setEvidenceCompleted] = useState(false);
   const [progress, setProgress] = useState<MapArea | null>(resume ?? null);
+  const [progressAnnouncement, setProgressAnnouncement] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const controller = useRef<AbortController | null>(null);
   const closed = useRef(false);
   const locationRequest = useRef(0);
+  const lastAnnouncement = useRef<MapDownloadProgressState | null>(null);
   useEffect(() => {
     closed.current = false;
     return () => {
@@ -94,6 +101,12 @@ export default function MapDownloadsSheet({
       controller.current?.abort();
     }
   }, [offline]);
+  const announceProgress = (state: MapDownloadProgressState) => {
+    if (shouldAnnounceMapDownloadProgress(lastAnnouncement.current, state)) {
+      lastAnnouncement.current = state;
+      setProgressAnnouncement(mapDownloadProgressAnnouncement(state));
+    }
+  };
   const selection = useMemo(() => {
     try {
       const bounds = progress?.bounds ?? resume?.bounds ?? areaBounds(center, selectedRadiusNm);
@@ -116,13 +129,20 @@ export default function MapDownloadsSheet({
   }, [center, selectedRadiusNm, zoom, resume, progress]);
   const download = async () => {
     if (!areaConfirmed || !selection.bounds || selection.error || busy || offline) return;
+    const mapAlreadyComplete = progress?.status === 'complete';
     setBusy(true);
-    setPhase('map');
+    setPhase(mapAlreadyComplete ? 'map' : 'preparing');
+    lastAnnouncement.current = null;
+    announceProgress(
+      mapAlreadyComplete ? { phase: 'map', mapStatus: 'complete' } : { phase: 'preparing' },
+    );
     setError('');
     setMessage('');
     setEvidenceFailed(false);
+    setEvidenceCompleted(false);
     const abort = new AbortController();
     controller.current = abort;
+    let latestProgress = progress;
     try {
       const result =
         progress?.status === 'complete'
@@ -135,7 +155,18 @@ export default function MapDownloadsSheet({
                 id: progress?.id ?? resume?.id,
               },
               (area) => {
-                if (!closed.current) setProgress(area);
+                latestProgress = area;
+                if (!closed.current) {
+                  setPhase('map');
+                  setProgress(area);
+                  announceProgress({
+                    phase: 'map',
+                    completedTiles: area.completedTiles,
+                    tileCount: area.tileCount,
+                    usableZoom: area.usableZoom,
+                    mapStatus: area.status,
+                  });
+                }
               },
               abort.signal,
             );
@@ -143,8 +174,16 @@ export default function MapDownloadsSheet({
       setProgress(result);
       onSaved();
       setMessage('Map saved on this device.');
+      announceProgress({
+        phase: 'map',
+        completedTiles: result.completedTiles,
+        tileCount: result.tileCount,
+        usableZoom: result.usableZoom,
+        mapStatus: result.status,
+      });
       if (includeEvidence && !abort.signal.aborted) {
         setPhase('evidence');
+        announceProgress({ phase: 'evidence' });
         try {
           const savedCenter: Position = [
             (result.bounds[0] + result.bounds[2]) / 2,
@@ -163,9 +202,12 @@ export default function MapDownloadsSheet({
           setMessage(
             'Map and available regional evidence saved. Open Sources & coverage for missing data and expiry dates.',
           );
+          setEvidenceCompleted(true);
+          announceProgress({ phase: 'evidence-complete' });
         } catch (error) {
           if (closed.current) return;
           setEvidenceFailed(true);
+          announceProgress({ phase: 'evidence-failed' });
           setError(
             abort.signal.aborted
               ? 'Map saved. Area data download cancelled; previously saved data is retained.'
@@ -175,6 +217,13 @@ export default function MapDownloadsSheet({
       }
     } catch (error) {
       if (closed.current) return;
+      announceProgress({
+        phase: abort.signal.aborted ? 'map-paused' : 'map-failed',
+        completedTiles: latestProgress?.completedTiles,
+        tileCount: latestProgress?.tileCount,
+        usableZoom: latestProgress?.usableZoom,
+        mapStatus: latestProgress?.status,
+      });
       setError(
         abort.signal.aborted
           ? 'Download paused. Resume it from Saved; completed resources are retained.'
@@ -191,6 +240,52 @@ export default function MapDownloadsSheet({
       }
     }
   };
+  const tilePercent = mapTileProgressPercent(progress?.completedTiles, progress?.tileCount);
+  const mapStageStatus =
+    progress?.status === 'complete'
+      ? 'Complete'
+      : phase === 'preparing'
+        ? 'Preparing'
+        : phase === 'map'
+          ? 'Downloading'
+          : progress?.status === 'partial'
+            ? 'Paused · partial'
+            : 'Not started';
+  const mapStageDetail = progress
+    ? `Tiles ${progress.completedTiles} of ${progress.tileCount}${tilePercent === null ? '' : ` · ${tilePercent}% of tiles`} · ${(progress.bytes / 1_000_000).toFixed(1)} MB downloaded.${
+        progress.status === 'complete'
+          ? ' Required tiles and fonts are ready.'
+          : progress.completedTiles >= progress.tileCount
+            ? ' Tiles are complete; required fonts and map checks are finishing.'
+            : progress.usableZoom !== undefined
+              ? ` Partial map is ready through zoom ${progress.usableZoom}; open it from Saved.`
+              : progress.status === 'partial'
+                ? ' No usable partial map is ready yet; resume to finish coarse tiles and fonts.'
+                : ''
+      }`
+    : phase === 'preparing'
+      ? 'Preparing map metadata and required resources.'
+      : 'Choose an area and start the map download.';
+  const evidenceStageStatus = !includeEvidence
+    ? 'Not requested'
+    : evidenceCompleted
+      ? 'Complete'
+      : evidenceFailed
+        ? 'Failed · map remains saved'
+        : phase === 'evidence'
+          ? 'Downloading'
+          : progress?.status === 'complete'
+            ? 'Ready to retry'
+            : 'Starts after map files complete';
+  const evidenceStageDetail = !includeEvidence
+    ? 'Places and weather were not requested.'
+    : evidenceCompleted
+      ? 'Available regional data is saved. Review Sources & coverage for gaps and expiry dates.'
+      : evidenceFailed
+        ? 'Retry places and weather without redownloading the complete map.'
+        : phase === 'evidence'
+          ? 'Saving available places and weather for this area.'
+          : 'Optional place and weather data is separate from the display map.';
   return (
     <Sheet
       title={resume ? 'Resume map download' : 'Download a map area'}
@@ -404,29 +499,36 @@ export default function MapDownloadsSheet({
       {areaConfirmed && selection.error ? <Notice tone="warning">{selection.error}</Notice> : null}
       {error ? <Notice tone="warning">{error}</Notice> : null}
       {message ? <Notice>{message}</Notice> : null}
-      {progress?.status === 'partial' && typeof progress.usableZoom === 'number' ? (
-        <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19 }}>
-          Coarse coverage is ready through zoom {progress.usableZoom} of {progress.maxZoom}. You can
-          pause and open this partial map from Saved.
+      {busy || progress ? (
+        <View
+          style={{ padding: 14, gap: 12, borderWidth: 1, borderColor: c.line, borderRadius: 12 }}
+        >
+          <Text style={{ color: c.ink, fontSize: 14, fontWeight: '600' }}>Download stages</Text>
+          <View style={{ gap: 4 }}>
+            <Text style={{ color: c.ink, fontSize: 12, fontWeight: '600' }}>
+              Map tiles & required fonts · {mapStageStatus}
+            </Text>
+            <Text style={{ color: c.muted, fontSize: 12, lineHeight: 18 }}>{mapStageDetail}</Text>
+          </View>
+          <View style={{ gap: 4 }}>
+            <Text style={{ color: c.ink, fontSize: 12, fontWeight: '600' }}>
+              Places & weather · {evidenceStageStatus}
+            </Text>
+            <Text style={{ color: c.muted, fontSize: 12, lineHeight: 18 }}>
+              {evidenceStageDetail}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+      {progressAnnouncement ? (
+        <Text accessibilityLiveRegion="polite" style={styles.liveProgress}>
+          {progressAnnouncement}
         </Text>
       ) : null}
       {busy ? (
-        <>
-          <Text accessibilityLiveRegion="polite" style={{ color: c.ink, fontSize: 13 }}>
-            {phase === 'evidence' ? (
-              'Saving available places and weather…'
-            ) : (
-              <>
-                Downloading {progress?.completedTiles ?? 0} /{' '}
-                {progress?.tileCount ?? selection.estimate?.tileCount ?? 0} tiles ·{' '}
-                {((progress?.bytes ?? 0) / 1_000_000).toFixed(1)} MB
-              </>
-            )}
-          </Text>
-          <Button secondary onPress={() => controller.current?.abort()}>
-            {phase === 'evidence' ? 'Cancel data download' : 'Pause download'}
-          </Button>
-        </>
+        <Button secondary onPress={() => controller.current?.abort()}>
+          {phase === 'evidence' ? 'Cancel data download' : 'Pause download'}
+        </Button>
       ) : progress?.status === 'complete' ? (
         <>
           {evidenceFailed && includeEvidence ? (
@@ -448,3 +550,13 @@ export default function MapDownloadsSheet({
     </Sheet>
   );
 }
+
+const styles = {
+  liveProgress: {
+    position: 'absolute' as const,
+    width: 1,
+    height: 1,
+    overflow: 'hidden' as const,
+    opacity: 0,
+  },
+};

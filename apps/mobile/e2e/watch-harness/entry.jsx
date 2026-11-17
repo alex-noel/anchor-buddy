@@ -3,6 +3,21 @@ import { createRoot } from 'react-dom/client';
 import WatchScreen from '../../src/screens/WatchScreen';
 import ResultCard from '../../src/components/ResultCard';
 import { Field } from '../../src/components/ui';
+import Details from '../../src/components/Details';
+import { assessCandidate } from '@anchor-buddy/domain';
+import { DEFAULT_VESSEL, createDefaultSearch, createDemoPack } from '@anchor-buddy/domain/testing';
+function DetailFixture() {
+  const pack = createDemoPack();
+  const place = pack.places[0];
+  const search = createDefaultSearch();
+  const assessed = assessCandidate({ id: place.id, name: 'Test-only long harbour detail — synthetic evidence', kind: place.kind, position: place.position, place }, DEFAULT_VESSEL, search, pack, { purpose: 'historical', assessedAt: new Date().toISOString() });
+  const assessment = { ...assessed, status: 'excluded', reasons: [
+    { code: 'fixture_exclusion', severity: 'excluded', message: 'Synthetic exclusion remains visible before planning.' },
+    { code: 'fixture_missing', severity: 'insufficient_evidence', message: 'Synthetic depth evidence is missing.' },
+    { code: 'fixture_information', severity: 'info', message: 'Secondary synthetic context.' },
+  ] };
+  return <Details assessment={assessment} pack={pack} units="metric" evidenceCachedAt="2026-11-01T12:00:00Z" onClose={() => {}} onPlan={() => {}} />;
+}
 function Cards() {
   const [selected, setSelected] = useState(-1);
   return (
@@ -65,5 +80,5 @@ function Harness() {
   );
 }
 createRoot(document.getElementById('root')).render(
-  new URLSearchParams(location.search).has('cards') ? <Cards /> : <Harness />,
+  new URLSearchParams(location.search).has('details') ? <DetailFixture /> : new URLSearchParams(location.search).has('cards') ? <Cards /> : <Harness />,
 );

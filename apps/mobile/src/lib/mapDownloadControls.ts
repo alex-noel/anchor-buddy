@@ -6,6 +6,91 @@ export interface RadiusDraft {
   units: UnitSystem;
   referenceNm?: number;
 }
+
+export type MapDownloadProgressPhase =
+  | 'preparing'
+  | 'map'
+  | 'evidence'
+  | 'map-paused'
+  | 'map-failed'
+  | 'complete'
+  | 'evidence-complete'
+  | 'evidence-failed';
+export interface MapDownloadProgressState {
+  phase: MapDownloadProgressPhase;
+  completedTiles?: number;
+  tileCount?: number;
+  usableZoom?: number;
+  mapStatus?: 'partial' | 'complete';
+}
+
+export function mapTileProgressPercent(completedTiles?: number, tileCount?: number): number | null {
+  if (
+    !Number.isFinite(completedTiles) ||
+    !Number.isFinite(tileCount) ||
+    tileCount === undefined ||
+    completedTiles === undefined ||
+    tileCount <= 0 ||
+    completedTiles < 0
+  )
+    return null;
+  return Math.min(100, Math.floor((completedTiles / tileCount) * 100));
+}
+
+/** Announce stage changes, readiness changes, completion, or at most each 10% of known tiles. */
+export function shouldAnnounceMapDownloadProgress(
+  previous: MapDownloadProgressState | null,
+  current: MapDownloadProgressState,
+): boolean {
+  if (!previous || previous.phase !== current.phase) return true;
+  if (current.phase !== 'map') return false;
+  if (previous.mapStatus !== current.mapStatus && current.mapStatus === 'complete') return true;
+  if (previous.usableZoom !== current.usableZoom && current.usableZoom !== undefined) return true;
+  const before = mapTileProgressPercent(previous.completedTiles, previous.tileCount);
+  const now = mapTileProgressPercent(current.completedTiles, current.tileCount);
+  if (before === null && now !== null) return true;
+  return before !== null && now !== null && now >= before + 10;
+}
+
+export function mapDownloadProgressAnnouncement(state: MapDownloadProgressState): string {
+  switch (state.phase) {
+    case 'preparing':
+      return 'Preparing the map download.';
+    case 'evidence':
+      return 'Map files are complete. Saving available regional places and weather.';
+    case 'map-paused':
+      return 'Map download paused. Completed resources are retained for resume.';
+    case 'map-failed':
+      return 'Map download stopped before completion. Review the error and resume when ready.';
+    case 'complete':
+      return 'Map files complete. Required tiles and fonts are ready.';
+    case 'evidence-complete':
+      return 'Map files and available regional evidence are saved.';
+    case 'evidence-failed':
+      return 'Map files are saved, but regional evidence download failed.';
+    case 'map': {
+      if (state.mapStatus === 'complete')
+        return 'Map files complete. Required tiles and fonts are ready.';
+      const percent = mapTileProgressPercent(state.completedTiles, state.tileCount);
+      const count =
+        state.completedTiles !== undefined && state.tileCount !== undefined
+          ? `${state.completedTiles} of ${state.tileCount} tiles`
+          : 'tile count unavailable';
+      const progress = percent === null ? count : `${count} (${percent}%)`;
+      if (
+        state.completedTiles !== undefined &&
+        state.tileCount !== undefined &&
+        state.completedTiles >= state.tileCount
+      )
+        return `All map tiles downloaded (${progress}). Completing required fonts and map checks.`;
+      return `Map download progress: ${progress}.${
+        state.usableZoom !== undefined
+          ? ` Coarse coverage is ready through zoom ${state.usableZoom}.`
+          : ''
+      }`;
+    }
+  }
+}
 const ratio = (units: UnitSystem) =>
   units === 'metric'
     ? CANONICAL_CONVERSIONS.kilometresPerNauticalMile

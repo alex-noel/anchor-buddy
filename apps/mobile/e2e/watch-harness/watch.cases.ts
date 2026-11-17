@@ -157,3 +157,21 @@ test('backgrounding invalidates delayed permission and alarm readiness', async (
   await expect(page.getByRole('checkbox', { name: /I heard the test alarm/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Arm anchor watch', exact: true })).toBeDisabled();
 });
+
+test('details preserve visible blocking reasons and separate source dates', async ({ page }, testInfo) => {
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/?details');
+    await expect(page.getByText('Synthetic exclusion remains visible before planning.')).toBeVisible();
+    await expect(page.getByText('Synthetic depth evidence is missing.')).toBeVisible();
+    await expect(page.getByText(/Historical assessment/)).toBeVisible();
+    await expect(page.getByText('Synthetic test data pack', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Local evidence cache saved/)).toBeVisible();
+    await page.getByRole('button', { name: /Other assessment findings/ }).click();
+    await expect(page.getByText('Secondary synthetic context.')).toBeVisible();
+    await page.getByRole('button', { name: /Sources & freshness/ }).click();
+    await expect(page.getByText(/Retrieved/).first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('details-' + width + '.png'), fullPage: true });
+  }
+});

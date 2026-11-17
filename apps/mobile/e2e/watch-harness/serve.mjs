@@ -11,6 +11,8 @@ const result = await build({
   jsx: 'automatic',
   define: { 'process.env.NODE_ENV': '"test"', __DEV__: 'true' },
   alias: {
+    // Fixtures are enabled only in this isolated test entry, never the app export.
+    '@anchor-buddy/domain/testing': here + '../../../../packages/domain/src/testing.ts',
     'react-native': here + 'native.js',
     '@anchor-buddy/anchor-watch': here + 'bridge.ts',
     'expo-location': here + 'bridge.ts',
