@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: '.',
-  testMatch: 'map-download.cases.ts',
+  testMatch: '*.cases.ts',
   outputDir: '../../../../.artifacts/e2e-download-harness',
   workers: 1,
   timeout: 60_000,

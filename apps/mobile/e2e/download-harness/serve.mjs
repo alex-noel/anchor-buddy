@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
@@ -31,6 +31,28 @@ const contentTypes = {
 
 const server = createServer(async (request, response) => {
   try {
+    const requestUrl = new URL(request.url, 'http://localhost');
+    if (request.method === 'GET' && requestUrl.pathname === '/__test__/foreign-sw.js') {
+      response.writeHead(200, { 'Content-Type': 'text/javascript', 'Service-Worker-Allowed': '/' });
+      response.end("self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));");
+      return;
+    }
+    // Test-only exported-build version switch. Never included in application code.
+    if (request.method === 'POST' && requestUrl.pathname === '/__test__/update') {
+      const index = join(output, 'index.html');
+      await writeFile(
+        index,
+        (await readFile(index, 'utf8')) + `\n<!-- test revision ${Date.now()} -->`,
+      );
+      await prepareWebOffline(output);
+      if (requestUrl.searchParams.get('invalid') === 'true')
+        await writeFile(
+          index,
+          (await readFile(index, 'utf8')) + '\n<!-- integrity mismatch fixture -->',
+        );
+      response.writeHead(200).end('updated');
+      return;
+    }
     const path = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
     const file = resolve(output, '.' + (path === '/' ? '/index.html' : path));
     if (!file.startsWith(output + sep) || request.method !== 'GET') {
