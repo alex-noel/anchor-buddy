@@ -249,3 +249,131 @@ test('stop failure retains retry and a changed session requires a new confirmati
   );
   expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(2);
 });
+
+test('an active watch without a session identifier never receives a stop command', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(() =>
+    (window as any).watchHarness.emit({
+      state: 'monitoring',
+      serviceRunning: true,
+      sessionId: undefined,
+      anchor: { latitude: 45, longitude: 12 },
+      radiusM: 50,
+    }),
+  );
+  await page.getByRole('button', { name: 'Stop watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(page.getByText(/no verified identifier/)).toBeVisible();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(0);
+  await expect(page.getByRole('dialog', { name: 'Stop anchor watch?' })).toBeVisible();
+});
+
+test('unavailable post-stop status cannot confirm a stop', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    (window as any).watchHarness.emit({
+      state: 'monitoring',
+      serviceRunning: true,
+      sessionId: 'postcheck',
+      anchor: { latitude: 45, longitude: 12 },
+      radiusM: 50,
+    });
+    (window as any).watchHarness.overridePostStopRead({
+      nativeAvailable: false,
+      state: 'idle',
+      serviceRunning: false,
+    });
+  });
+  await page.getByRole('button', { name: 'Stop watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(page.getByText(/native watch service is unavailable/)).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Stop anchor watch?' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(1);
+});
+
+test('new active session event during delayed stop is not overwritten by stale idle', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    (window as any).watchHarness.emit({
+      state: 'monitoring',
+      serviceRunning: true,
+      sessionId: 'session-a',
+      anchor: { latitude: 45, longitude: 12 },
+      radiusM: 50,
+    });
+    (window as any).watchHarness.holdStop();
+  });
+  await page.getByRole('button', { name: 'Stop watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Verifying stop…', exact: true })).toBeDisabled();
+  await page.evaluate(() => {
+    (window as any).watchHarness.emit({
+      state: 'monitoring',
+      serviceRunning: true,
+      sessionId: 'session-b',
+    });
+    (window as any).watchHarness.resolveStop();
+  });
+  await expect(
+    page.getByText(/newer or inconsistent watch status arrived during the stop/),
+  ).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Stop anchor watch?' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(1);
+});
+
+test('an idle post-read naming a different session cannot confirm the old session stopped', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    (window as any).watchHarness.emit({
+      state: 'monitoring',
+      serviceRunning: true,
+      sessionId: 'old-session',
+      anchor: { latitude: 45, longitude: 12 },
+      radiusM: 50,
+    });
+    (window as any).watchHarness.overridePostStopRead({
+      nativeAvailable: true,
+      state: 'idle',
+      serviceRunning: false,
+      sessionId: 'other-session',
+    });
+  });
+  await page.getByRole('button', { name: 'Stop watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+  await expect(page.getByText(/watch session changed/i)).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Stop anchor watch?' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).watchHarness.calls.stop)).toBe(1);
+});
+
+test('post-stop empty session ID is rejected while an absent ID can confirm idle', async ({
+  page,
+}) => {
+  for (const sessionId of ['', undefined]) {
+    await page.goto('/');
+    await page.evaluate((value) => {
+      (window as any).watchHarness.emit({
+        state: 'monitoring',
+        serviceRunning: true,
+        sessionId: 'old-session',
+        anchor: { latitude: 45, longitude: 12 },
+        radiusM: 50,
+      });
+      (window as any).watchHarness.overridePostStopRead({
+        nativeAvailable: true,
+        state: 'idle',
+        serviceRunning: false,
+        sessionId: value,
+      });
+    }, sessionId);
+    await page.getByRole('button', { name: 'Stop watch', exact: true }).click();
+    await page.getByRole('button', { name: 'Confirm stop watch', exact: true }).click();
+    if (sessionId === '') await expect(page.getByText(/watch session changed/i)).toBeVisible();
+    else await expect(page.getByRole('dialog', { name: 'Stop anchor watch?' })).toHaveCount(0);
+  }
+});

@@ -71,6 +71,7 @@ export default function WatchScreen({
   const lastSaved = useRef('');
   const inFlight = useRef(false);
   const snapshotEpoch = useRef(0);
+  const stopObserved = useRef<{ id: string; unsafe: boolean } | null>(null);
   const lifecycleEpoch = useRef(0);
   const live = useRef(true);
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
@@ -107,6 +108,19 @@ export default function WatchScreen({
   }, [tested, alarmReadiness]);
   const accept = useCallback(
     (next: Watch.WatchStatus) => {
+      const pendingStop = stopObserved.current;
+      if (pendingStop?.unsafe) {
+        snapshotEpoch.current++;
+        return;
+      }
+      if (
+        pendingStop &&
+        (!next.nativeAvailable ||
+          activeStates.has(next.state) ||
+          next.serviceRunning ||
+          (next.sessionId && next.sessionId !== pendingStop.id))
+      )
+        pendingStop.unsafe = true;
       if (activeStates.has(next.state)) {
         positionCapture.cancel();
         setFindingPosition(false);
@@ -263,16 +277,45 @@ export default function WatchScreen({
         setStopSession(null);
         return;
       }
+      if (
+        typeof stopSession.id !== 'string' ||
+        !stopSession.id.trim() ||
+        typeof before.sessionId !== 'string' ||
+        !before.sessionId.trim()
+      )
+        throw new Error(
+          'The active watch session has no verified identifier. Recheck its status before stopping.',
+        );
       if (before.sessionId !== stopSession.id)
         throw new Error(
           'The watch session changed. Cancel and review the current watch before stopping it.',
         );
+      const observed = { id: stopSession.id, unsafe: false };
+      stopObserved.current = observed;
       await Watch.stop();
+      if (!live.current || lifecycle !== lifecycleEpoch.current) return;
+      if (observed.unsafe)
+        throw new Error(
+          'A newer or inconsistent watch status arrived during the stop. Review it before confirming completion.',
+        );
       const afterEpoch = snapshotEpoch.current;
       const after = await Watch.getStatus();
       if (!live.current || lifecycle !== lifecycleEpoch.current) return;
       if (afterEpoch !== snapshotEpoch.current)
         throw new Error('A newer watch status arrived. Review it before confirming completion.');
+      if (!after.nativeAvailable)
+        throw new Error(
+          'The native watch service is unavailable. Its stopped state cannot be verified here.',
+        );
+      if (
+        after.sessionId !== undefined &&
+        (typeof after.sessionId !== 'string' ||
+          !after.sessionId.trim() ||
+          after.sessionId !== stopSession.id)
+      )
+        throw new Error(
+          'The watch session changed. Review the current watch before confirming completion.',
+        );
       accept(after);
       if (activeStates.has(after.state) || after.serviceRunning)
         throw new Error(
@@ -289,6 +332,7 @@ export default function WatchScreen({
         );
       }
     } finally {
+      stopObserved.current = null;
       inFlight.current = false;
       if (live.current) setBusy(false);
     }

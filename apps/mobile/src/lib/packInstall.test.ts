@@ -349,3 +349,80 @@ test('synthetic manifests are rejected before any resource is downloaded', async
   );
   assert.equal(fetched, false);
 });
+
+test('cancellation during fetch, hash, staging or final watch check never commits', async () => {
+  const { createPackOperation } = await import('./regionalPacks');
+  for (const phase of ['fetch', 'hash', 'stage', 'final-check'] as const) {
+    const { manifest, bytes } = fixture();
+    const operation = createPackOperation();
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let guards = 0,
+      commits = 0,
+      rollbacks = 0;
+    const pause = async () => {
+      entered();
+      await gate;
+    };
+    const promise = installPack(
+      manifest,
+      ioFor(bytes, {
+        check: operation.check,
+        fetchAsset: async () => {
+          if (phase === 'fetch') await pause();
+          return bytes;
+        },
+        hash: async (value) => {
+          if (phase === 'hash') await pause();
+          return hash(value);
+        },
+        stage: async () => {
+          if (phase === 'stage') await pause();
+        },
+        assertReplacementAllowed: async () => {
+          guards++;
+          if (phase === 'final-check' && guards === 2) await pause();
+        },
+        commit: async () => {
+          commits++;
+        },
+        rollback: async () => {
+          rollbacks++;
+        },
+      }),
+    );
+    await started;
+    assert.equal(operation.cancel(), true);
+    release();
+    await assert.rejects(promise, /cancelled/i);
+    assert.equal(commits, 0, phase);
+    assert.equal(rollbacks, 1, phase);
+  }
+});
+
+test('a watch activated during final guard blocks publication', async () => {
+  const { manifest, bytes } = fixture();
+  let guards = 0,
+    committed = false;
+  await assert.rejects(
+    installPack(
+      manifest,
+      ioFor(bytes, {
+        assertReplacementAllowed: async () => {
+          if (++guards === 2) throw new Error('watch active');
+        },
+        commit: async () => {
+          committed = true;
+        },
+      }),
+    ),
+    /watch active/,
+  );
+  assert.equal(committed, false);
+});

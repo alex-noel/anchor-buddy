@@ -23,6 +23,8 @@ export interface RegionalData {
   notices: string[];
   partial: boolean;
   savedAt?: string;
+  /** Absent on legacy entries: ownership is unknown and protected. */
+  retention?: 'automatic' | 'retained';
   mapContext?: MapContext;
 }
 
@@ -122,6 +124,8 @@ export function readRegionalData(value: unknown): RegionalData {
     typeof data.partial !== 'boolean'
   )
     throw new Error('The data service returned invalid coverage information.');
+  if (data.retention !== undefined && !['automatic', 'retained'].includes(data.retention))
+    throw new Error('Unsupported evidence retention metadata.');
   if (data.mapContext !== undefined && !isMapContext(data.mapContext))
     throw new Error('The data service returned invalid scientific map context.');
   return data;
@@ -130,7 +134,7 @@ export function readRegionalData(value: unknown): RegionalData {
 export function readRegionCache(value: unknown): RegionalData[] {
   if (!Array.isArray(value)) return [];
   const result: RegionalData[] = [];
-  for (const row of value.slice(0, 8)) {
+  for (const row of value) {
     try {
       const next = readRegionalData(row);
       if (
@@ -169,11 +173,32 @@ export function regionContains(pack: RegionPack, center: Position, radiusNm: num
   }
 }
 
-/** Recent evidence cache is bounded independently of map tiles; old dates remain unchanged. */
+/** Legacy and explicitly retained records are protected; only automatic records can be evicted. */
 export function cacheRegion(previous: RegionalData[], next: RegionalData) {
-  const entries = [next, ...previous.filter((p) => p.pack.id !== next.pack.id)].slice(0, 8);
-  while (entries.length > 1 && JSON.stringify(entries).length > 2_500_000) entries.pop();
-  if (JSON.stringify(entries).length > 2_500_000)
-    throw new Error('This region is too large to save in the local evidence cache.');
+  const existing = previous.find((row) => row.pack.id === next.pack.id);
+  if (next.retention === 'automatic' && existing && existing.retention !== 'automatic')
+    return previous;
+  const entries = [next, ...previous.filter((row) => row.pack.id !== next.pack.id)];
+  while (entries.length > 8 || utf8Bytes(JSON.stringify(entries)) > 2_500_000) {
+    let removable = -1;
+    for (let i = entries.length - 1; i > 0; i--)
+      if (entries[i].retention === 'automatic') {
+        removable = i;
+        break;
+      }
+    if (removable < 0)
+      throw new Error('Evidence cache is full. Manage cached data in Saved, then retry.');
+    entries.splice(removable, 1);
+  }
   return entries;
+}
+
+/** UTF-8 length of the exact serialized text, excluding store-specific overhead. */
+export function utf8Bytes(value: string): number {
+  let bytes = 0;
+  for (const symbol of value) {
+    const code = symbol.codePointAt(0)!;
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+  }
+  return bytes;
 }

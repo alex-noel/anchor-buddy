@@ -61,6 +61,10 @@ export default function AdvancedFiltersSheet({
         ]}
       />
       <SeabedSelect value={bed} onChange={setBed} />
+      <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+        Seabed preference is part of the search. Reset below clears that preference as well as
+        result filters; Apply reassesses using your existing operating limits.
+      </Text>
       <Check
         label="Only sites with no known or unresolved vessel incompatibility"
         checked={draft.compatibleOnly}
@@ -79,7 +83,7 @@ export default function AdvancedFiltersSheet({
               setBed([]);
             }}
           >
-            Reset all filters
+            Reset filters & seabed preference
           </Button>
         </View>
         <View style={{ flex: 1 }}>

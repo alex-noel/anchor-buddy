@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Linking,
   Platform,
@@ -15,7 +15,13 @@ import type { RegionPack, UnitSystem, VesselProfile } from '@anchor-buddy/domain
 import { Button, Card, Chip, Eyebrow, Field, Icon, Notice } from '../components/ui';
 import { colors as c } from '../theme';
 import { depth, localTime } from '../lib/units';
-import { setLocal } from '../lib/storage';
+import { getLocalRaw, setLocal } from '../lib/storage';
+import {
+  commitRegionalPointer,
+  createPackOperation,
+  fetchRegional,
+  regionalCoordinator,
+} from '../lib/regionalPacks';
 import { providerBase } from '../lib/regionalDataCore';
 import type { Connectivity } from '../lib/connectivityCore';
 import type {
@@ -26,6 +32,7 @@ import type {
 import { getAPIBase } from '../lib/regionalData';
 import { installPack, validateManifest, validSegment } from '../lib/packInstall';
 import { beginPackStage, downloadOfflineChart, loadInstalledChartStyle } from '../lib/packFiles';
+import OfflineReadiness from '../components/OfflineReadiness';
 export interface MapLayerDefaults {
   depth: boolean;
   bedding: boolean;
@@ -139,6 +146,7 @@ export default function SettingsScreen({
   savedAt,
   onSave,
   onPack,
+  canReplaceRegion = () => true,
   vessel,
   onEditVessel,
   onEditDefaults,
@@ -160,6 +168,7 @@ export default function SettingsScreen({
   savedAt: string | null;
   onSave: () => Promise<void>;
   onPack: (p: RegionPack) => void;
+  canReplaceRegion?: () => boolean;
   vessel?: VesselProfile;
   onEditVessel?: () => void;
   onEditDefaults?: () => void;
@@ -183,7 +192,72 @@ export default function SettingsScreen({
       (Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001'),
   );
   const [message, setMessage] = useState('');
+  const [connectionFeedback, setConnectionFeedback] = useState('');
+  const [catalogueFeedback, setCatalogueFeedback] = useState('');
+  const [packFeedback, setPackFeedback] = useState('');
+  const [packFeedbackRegion, setPackFeedbackRegion] = useState('');
   const [busy, setBusy] = useState(false);
+  const [regionalPhase, setRegionalPhase] = useState<'preparing' | 'committing' | null>(null);
+  const [regionalAction, setRegionalAction] = useState<'connection' | 'pack' | null>(null);
+  const mounted = useRef(true);
+  const regionalOperation = useRef<ReturnType<typeof createPackOperation> | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      regionalOperation.current?.cancel();
+    };
+  }, []);
+  const runRegional = async (
+    feedbackKind: 'connection' | 'pack',
+    fn: (
+      operation: ReturnType<typeof createPackOperation>,
+      report: (message: string) => void,
+    ) => Promise<void>,
+  ) => {
+    if (regionalOperation.current || busy) return;
+    const operation = regionalCoordinator.acquire();
+    if (!operation) {
+      const feedback = 'A previous regional operation is still finishing. Try again shortly.';
+      (feedbackKind === 'connection' ? setConnectionFeedback : setPackFeedback)(feedback);
+      return;
+    }
+    regionalOperation.current = operation;
+    setRegionalAction(feedbackKind);
+    setRegionalPhase('preparing');
+    setBusy(true);
+    setMessage('');
+    const setFeedback = feedbackKind === 'connection' ? setConnectionFeedback : setPackFeedback;
+    setFeedback('');
+    if (feedbackKind === 'connection') setCatalogueFeedback('');
+    const report = (text: string) => {
+      if (mounted.current && regionalOperation.current === operation) {
+        if (feedbackKind === 'connection' && text.startsWith('Catalogue outcome: '))
+          setCatalogueFeedback(text.slice('Catalogue outcome: '.length));
+        else setFeedback(text);
+      }
+    };
+    try {
+      await fn(operation, report);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      report(
+        feedbackKind === 'connection'
+          ? `Could not reach the regional API at ${api}. Check that this address is reachable from this device and try Connect & check regions again. ${detail}`
+          : detail,
+      );
+    } finally {
+      regionalCoordinator.release(operation);
+      if (regionalOperation.current === operation) {
+        regionalOperation.current = null;
+        if (mounted.current) {
+          setRegionalPhase(null);
+          setRegionalAction(null);
+          setBusy(false);
+        }
+      }
+    }
+  };
   const [regions, setRegions] = useState<
     { id: string; version?: string; label: string; releaseStatus: string; synthetic: boolean }[]
   >([]);
@@ -240,21 +314,6 @@ export default function SettingsScreen({
     }
   };
   const base = () => providerBase(api);
-  const fetchChecked = async (url: string, timeout: number) => {
-    try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(timeout),
-        redirect: 'error',
-      });
-      if (!response.ok) throw new Error('Provider returned HTTP ' + response.status + '.');
-      return response;
-    } catch (error) {
-      throw new Error(
-        (error instanceof Error ? error.message : 'Provider could not be reached.') +
-          ' Check the API address and network. Your previous regional pack is retained.',
-      );
-    }
-  };
   const assertReplacementAllowed = async () => {
     const status = await Watch.getStatus();
     if (
@@ -263,10 +322,17 @@ export default function SettingsScreen({
     )
       throw new Error('Stop the current anchor watch before replacing its regional evidence.');
   };
-  const load = async () => {
+  const load = async (
+    operation: ReturnType<typeof createPackOperation>,
+    report: (message: string) => void,
+  ) => {
     const address = base();
-    const response = await fetchChecked(address + '/v1/regions', 15000);
-    const data: unknown = await response.json();
+    const data: unknown = await fetchRegional(
+      address + '/v1/regions',
+      15000,
+      operation,
+      (response) => response.json(),
+    );
     if (
       !data ||
       typeof data !== 'object' ||
@@ -290,48 +356,71 @@ export default function SettingsScreen({
     )
       throw new Error('The provider returned invalid region records.');
     const realRegions = (items as typeof regions).filter((item) => item.synthetic === false);
-    setRegions(realRegions);
-    setCatalogueLoaded(true);
+    operation.check();
+    if (mounted.current && regionalOperation.current === operation) {
+      setRegions(realRegions);
+      setCatalogueLoaded(true);
+    }
     try {
+      operation.check();
       await setLocal('provider-api-url', address);
-      setApi(address);
-      setMessage(
-        realRegions.length
-          ? 'Connected and API address saved. Only reviewed regions can be installed.'
-          : 'Connected and API address saved. Live searches are available; this server has no reviewed regional packs to download.',
+      operation.check();
+      if (mounted.current && regionalOperation.current === operation) setApi(address);
+      report('Regional API reached and address saved on this device.');
+      report(
+        'Catalogue outcome: ' +
+          (realRegions.length
+            ? `${realRegions.length} regional ${realRegions.length === 1 ? 'entry' : 'entries'} loaded. Only reviewed regions can be installed.`
+            : 'Catalogue loaded with no reviewed regional packs. Live searches remain available.'),
       );
     } catch {
-      setMessage('Catalogue loaded, but the API address could not be saved on this device.');
+      operation.check();
+      report(
+        'Catalogue outcome: Catalogue loaded, but the API address could not be saved on this device.',
+      );
     }
   };
-  const download = async (id: string, version?: string) => {
+  const download = async (
+    id: string,
+    version: string | undefined,
+    operation: ReturnType<typeof createPackOperation>,
+    report: (message: string) => void,
+  ) => {
+    if (!canReplaceRegion())
+      throw new Error(
+        'Stored region needs recovery before replacement. Retry from the recovery notice.',
+      );
     await assertReplacementAllowed();
+    operation.check();
     const root = base() + '/v1/regions/' + encodeURIComponent(id);
-    const response = await fetchChecked(
+    const manifest: unknown = await fetchRegional(
       root + '/manifest' + (version ? '?version=' + encodeURIComponent(version) : ''),
       15000,
+      operation,
+      (response) => response.json(),
     );
-    const manifest: unknown = await response.json();
     validateManifest(manifest, { regionId: id, version });
     const stage = await beginPackStage(Crypto.randomUUID());
     const next = await installPack(
       manifest,
       {
-        fetchAsset: async (name) => {
-          const r = await fetchChecked(
+        fetchAsset: async (name) =>
+          fetchRegional(
             root +
               '/' +
               encodeURIComponent(manifest.version) +
               '/assets/' +
               encodeURIComponent(name),
             120000,
-          );
-          const expected = manifest.assets.find((asset) => asset.path === name)!;
-          const reported = r.headers.get('content-length');
-          if (reported && Number(reported) !== expected.bytes)
-            throw new Error('Asset size differs from its manifest. Previous pack retained.');
-          return new Uint8Array(await r.arrayBuffer());
-        },
+            operation,
+            async (response) => {
+              const expected = manifest.assets.find((asset) => asset.path === name)!;
+              const reported = response.headers.get('content-length');
+              if (reported && Number(reported) !== expected.bytes)
+                throw new Error('Asset size differs from its manifest. Previous pack retained.');
+              return new Uint8Array(await response.arrayBuffer());
+            },
+          ),
         hash: async (bytes) =>
           Array.from(
             new Uint8Array(
@@ -345,9 +434,10 @@ export default function SettingsScreen({
             .join(''),
         stage: stage.stage,
         rollback: stage.rollback,
+        check: operation.check,
         assertReplacementAllowed,
         progress: (done, total) =>
-          setMessage(
+          report(
             'Verified ' +
               done +
               ' of ' +
@@ -355,20 +445,41 @@ export default function SettingsScreen({
               ' regional assets. Previous pack remains active until completion.',
           ),
         commit: async (p, m) => {
+          if (!canReplaceRegion())
+            throw new Error('Stored region needs recovery before replacement.');
           const assetKey = await stage.finalize();
+          operation.check();
           await assertReplacementAllowed();
-          await setLocal('active-region', {
-            pack: p,
-            manifest: m,
+          operation.check();
+          if (!canReplaceRegion())
+            throw new Error('Stored region needs recovery before replacement.');
+          await commitRegionalPointer({
+            operation,
             assetKey,
-            savedAt: new Date().toISOString(),
+            assertReplacementAllowed,
+            assertCurrent: () => {
+              if (!canReplaceRegion())
+                throw new Error('Stored region needs recovery before replacement.');
+            },
+            onBegin: () => {
+              if (mounted.current && regionalOperation.current === operation)
+                setRegionalPhase('committing');
+            },
+            write: () =>
+              setLocal('active-region', {
+                pack: p,
+                manifest: m,
+                assetKey,
+                savedAt: new Date().toISOString(),
+              }),
+            readRaw: () => getLocalRaw('active-region'),
           });
         },
       },
       { regionId: id, version },
     );
     onPack(next);
-    setMessage(
+    report(
       'Verified regional analysis installed. ' +
         (Date.parse(next.validUntil) < Date.now()
           ? 'Its forecast evidence is expired; reconnect for updated evidence.'
@@ -592,6 +703,7 @@ export default function SettingsScreen({
           separately.
         </Text>
       </Card>
+      <OfflineReadiness />
       <Card>
         <Pressable
           accessibilityRole="button"
@@ -619,22 +731,60 @@ export default function SettingsScreen({
                 setApi(value);
                 setRegions([]);
                 setCatalogueLoaded(false);
-                setMessage('');
+                setConnectionFeedback('');
+                setCatalogueFeedback('');
               }}
               help="Use the Anchor Buddy server address. Provider API keys are managed on the server."
             />
             <Button
               secondary
               disabled={busy || networkUnavailable}
-              onPress={() => run(load)}
+              onPress={() => void runRegional('connection', load)}
               icon="refresh-cw"
             >
-              {busy ? 'Connecting…' : 'Connect & check regions'}
+              {busy && regionalAction === 'connection' ? 'Connecting…' : 'Connect & check regions'}
             </Button>
+            {connectionFeedback ? (
+              <View
+                accessibilityRole={
+                  connectionFeedback.startsWith('Could not reach') ? 'alert' : 'status'
+                }
+              >
+                <Notice tone={connectionFeedback.startsWith('Could not reach') ? 'error' : 'info'}>
+                  {connectionFeedback}
+                </Notice>
+              </View>
+            ) : null}
+            {regionalPhase ? (
+              <Button
+                secondary
+                small
+                disabled={regionalPhase === 'committing'}
+                onPress={() => {
+                  if (regionalOperation.current?.cancel()) {
+                    const pending = 'Cancelling regional operation…';
+                    (regionalAction === 'pack' ? setPackFeedback : setConnectionFeedback)(pending);
+                  }
+                }}
+              >
+                {regionalPhase === 'committing'
+                  ? 'Finishing activation…'
+                  : 'Cancel regional operation'}
+              </Button>
+            ) : null}
             {networkUnavailable ? (
               <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
                 Turn off Offline planning and reconnect to check the server or download a region.
               </Text>
+            ) : null}
+            {catalogueFeedback ? (
+              <View accessibilityRole="status">
+                <Notice
+                  tone={catalogueFeedback.startsWith('Catalogue loaded, but') ? 'warning' : 'info'}
+                >
+                  {catalogueFeedback}
+                </Notice>
+              </View>
             ) : null}
             {catalogueLoaded && !regions.length ? (
               <Notice>
@@ -654,10 +804,37 @@ export default function SettingsScreen({
                   small
                   secondary
                   disabled={busy || networkUnavailable || r.releaseStatus !== 'reviewed'}
-                  onPress={() => run(() => download(r.id, r.version))}
+                  onPress={() => {
+                    setPackFeedbackRegion(r.id);
+                    void runRegional('pack', (operation, report) =>
+                      download(r.id, r.version, operation, report),
+                    );
+                  }}
                 >
                   Download reviewed region
                 </Button>
+                {packFeedback && packFeedbackRegion === r.id ? (
+                  <View
+                    {...(/^Verified \d+ of \d+ regional assets/.test(packFeedback)
+                      ? {}
+                      : {
+                          accessibilityRole: packFeedback.includes('installed')
+                            ? 'status'
+                            : 'alert',
+                        })}
+                  >
+                    <Notice
+                      tone={
+                        packFeedback.includes('installed') ||
+                        /^Verified \d+ of \d+ regional assets/.test(packFeedback)
+                          ? 'info'
+                          : 'error'
+                      }
+                    >
+                      {packFeedback}
+                    </Notice>
+                  </View>
+                ) : null}
                 {r.releaseStatus !== 'reviewed' ? (
                   <Text style={{ fontSize: 12, color: c.muted, lineHeight: 19 }}>
                     This region cannot be installed until its nautical evidence has been reviewed.
@@ -740,7 +917,11 @@ export default function SettingsScreen({
           </Text>
         </View>
       </Card>
-      {message ? <Notice>{message}</Notice> : null}
+      {message ? (
+        <View accessibilityRole="status">
+          <Notice>{message}</Notice>
+        </View>
+      ) : null}
       <View style={{ gap: 12 }}>
         <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
           Anchor Buddy 0.1 · Profiles and watch logs are stored on this device.

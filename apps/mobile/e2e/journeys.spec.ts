@@ -168,7 +168,7 @@ test('search drafts and requests can be cancelled, then a saved search reopens a
     await enterSearchArea(page);
     await button(page, 'Search this area').click();
     await expect(page.getByText(/0 place records · 0 forecast intervals/)).toBeVisible();
-    await expect(page.getByText('No matching results', { exact: true })).toBeVisible();
+    await expect(page.getByText('No source places returned', { exact: true })).toBeVisible();
     await expect(page.getByText(/Cancelled request unexpectedly surfaced/)).toHaveCount(0);
 
     await button(page, 'Save results').click();

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { ScrollView, Text, View, useWindowDimensions, type TextInput } from 'react-native';
 import {
   assessCandidate,
+  validateSearch,
   type Assessment,
   type AssessmentContext,
   type Candidate,
@@ -40,6 +41,10 @@ export default function PlannerScreen({
   layers,
   nativeWatchAvailable = false,
   onEditSearch,
+  evidenceLoading = false,
+  savedPlanName,
+  materialNotice,
+  onSaveDraft,
 }: {
   candidate: Candidate;
   pack: RegionPack;
@@ -54,6 +59,15 @@ export default function PlannerScreen({
   layers?: { depth: boolean; bedding: boolean; marks: boolean };
   nativeWatchAvailable?: boolean;
   onEditSearch?: (search: SearchRequest, position: Position) => void;
+  evidenceLoading?: boolean;
+  savedPlanName?: string;
+  materialNotice?: string;
+  onSaveDraft?: (draft: {
+    name: string;
+    selectedPosition: Position;
+    plannedRodeM?: number;
+    search: SearchRequest;
+  }) => Promise<void>;
 }) {
   const { width } = useWindowDimensions();
   const [lat, setLat] = useState(String(candidate.position[1]));
@@ -66,6 +80,18 @@ export default function PlannerScreen({
   const [checks, setChecks] = useState<boolean[]>([false, false, false, false]);
   const [error, setError] = useState('');
   const [findingPosition, setFindingPosition] = useState(false);
+  const [choosingPoint, setChoosingPoint] = useState(false);
+  const [placementMessage, setPlacementMessage] = useState(
+    'This is a proposed drop point. Verify the actual anchor position on arrival.',
+  );
+  const latitudeInput = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const longitudeInput = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const rodeInput = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const draftNameInput = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const [draftName, setDraftName] = useState(savedPlanName ?? 'Anchor plan');
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftMessage, setDraftMessage] = useState('');
+  const draftSaveLock = useRef(false);
   const locationRequest = useRef(0);
   useEffect(
     () => () => {
@@ -78,6 +104,7 @@ export default function PlannerScreen({
     setFindingPosition(false);
   };
   const capturePosition = async () => {
+    setChoosingPoint(false);
     const request = ++locationRequest.current;
     setFindingPosition(true);
     setError('');
@@ -94,6 +121,9 @@ export default function PlannerScreen({
       setLat(String(latitude));
       setLon(String(longitude));
       setChecks([false, false, false, false]);
+      setPlacementMessage(
+        'Current device position captured as a proposed drop point. Arrival checks were cleared.',
+      );
     } catch (cause) {
       if (request === locationRequest.current)
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -165,16 +195,39 @@ export default function PlannerScreen({
     lon,
     units,
   ]);
-  const assessment = calculation.assessment;
+  const assessment = evidenceLoading ? null : calculation.assessment;
   const footprintResolved = assessment?.requiredRodeM != null && assessment?.swingRadiusM != null;
   const elapsedEvidence = assessment?.reasons.some(
     (reason) => reason.code === 'elapsed_stay' || reason.code.startsWith('currently_'),
   );
   const change = (set: (s: string) => void) => (value: string) => {
     cancelLocation();
+    setChoosingPoint(false);
     set(value);
     setChecks([false, false, false, false]);
     setError('');
+    setPlacementMessage(
+      'Proposed inputs edited. Review the point and rode again; arrival checks were cleared.',
+    );
+  };
+  const latitudeError =
+    !lat.trim() || !Number.isFinite(parseInputDecimal(lat)) || Math.abs(parseInputDecimal(lat)) > 85
+      ? 'Enter latitude from −85 to 85 degrees.'
+      : undefined;
+  const longitudeError =
+    !lon.trim() ||
+    !Number.isFinite(parseInputDecimal(lon)) ||
+    Math.abs(parseInputDecimal(lon)) > 180
+      ? 'Enter longitude from −180 to 180 degrees.'
+      : undefined;
+  const rodeError =
+    rode.trim() && (!Number.isFinite(deployedRodeM) || deployedRodeM < 1 || deployedRodeM > 1000)
+      ? `Enter deployed rode from ${depth(1, units)} to ${depth(1000, units)}, or leave it blank.`
+      : undefined;
+  const focusInvalid = () => {
+    if (latitudeError) latitudeInput.current?.focus();
+    else if (longitudeError) longitudeInput.current?.focus();
+    else if (rodeError) rodeInput.current?.focus();
   };
   return (
     <ScrollView
@@ -197,6 +250,13 @@ export default function PlannerScreen({
         Confirm the drop position, deployed rode and full swing footprint. Complete arrival checks
         before setting up the watch.
       </Text>
+      {evidenceLoading ? (
+        <Notice>
+          Refreshing current evidence. Assessment and watch handoff will be available when the
+          request settles.
+        </Notice>
+      ) : null}
+      {materialNotice ? <Notice tone="warning">{materialNotice}</Notice> : null}
       {depthAllowancePercent ? (
         <Notice>
           Explicit +{depthAllowancePercent}% depth alternative. Clearance, equipment and every other
@@ -206,7 +266,7 @@ export default function PlannerScreen({
       {onEditSearch ? (
         <Button
           secondary
-          disabled={!assessment}
+          disabled={!assessment || draftSaving}
           onPress={() => onEditSearch(effectiveSearch, pin.position)}
         >
           Edit stay and search limits
@@ -215,11 +275,11 @@ export default function PlannerScreen({
       <Card>
         <Eyebrow>1 · DROP POSITION</Eyebrow>
         {assessment ? (
-          <View style={{ height: width < 700 ? 300 : 340, borderRadius: 12, overflow: 'hidden' }}>
+          <View style={{ height: width < 700 ? 440 : 420, borderRadius: 12, overflow: 'hidden' }}>
             <Chart
               units={units}
               pack={pack}
-              assessments={[assessment]}
+              manualAssessment={assessment}
               selectedId={assessment.id}
               origin={pin.position}
               onlineBasemap={!offline}
@@ -227,14 +287,19 @@ export default function PlannerScreen({
               showBedding={layers?.bedding ?? true}
               showMarks={layers?.marks ?? false}
               initialZoom={16}
-              selectOnTap
+              selectOnTap={choosingPoint && !draftSaving}
               onSelect={() => onDetails(assessment, effectiveSearch)}
               onPin={(position) => {
+                if (!choosingPoint || draftSaveLock.current) return;
                 cancelLocation();
+                setChoosingPoint(false);
                 setLon(String(position[0]));
                 setLat(String(position[1]));
                 setChecks([false, false, false, false]);
                 setError('');
+                setPlacementMessage(
+                  'Proposed point selected on the map. Arrival checks were cleared.',
+                );
               }}
             />
           </View>
@@ -243,16 +308,51 @@ export default function PlannerScreen({
           {footprintResolved
             ? 'The shaded circle shows calculated swing geometry, not a clearance or holding guarantee. '
             : 'The full swing footprint is unknown; no swing circle is shown. '}
-          Tap the map or enter coordinates to adjust the drop point.
+          Choose map selection below or enter coordinates to adjust the proposed drop point.
         </Text>
+        <Button
+          secondary
+          disabled={!assessment || findingPosition || draftSaving}
+          onPress={() => {
+            setChoosingPoint(!choosingPoint);
+            setPlacementMessage(
+              choosingPoint
+                ? 'Map selection cancelled. The proposed point is unchanged.'
+                : 'Tap the map once to choose a proposed point, or cancel to keep the current point.',
+            );
+          }}
+        >
+          {choosingPoint ? 'Cancel map selection' : 'Choose point on map'}
+        </Button>
+        <Text style={{ color: c.ink, lineHeight: 20 }}>{placementMessage}</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          <Field signed label="Latitude" value={lat} onChange={change(setLat)} />
-          <Field signed label="Longitude" value={lon} onChange={change(setLon)} />
+          <Field
+            signed
+            required
+            disabled={draftSaving}
+            label="Latitude"
+            suffix="°"
+            value={lat}
+            onChange={change(setLat)}
+            error={latitudeError}
+            inputRef={latitudeInput}
+          />
+          <Field
+            signed
+            required
+            disabled={draftSaving}
+            label="Longitude"
+            suffix="°"
+            value={lon}
+            onChange={change(setLon)}
+            error={longitudeError}
+            inputRef={longitudeInput}
+          />
         </View>
         <Button
           secondary
           icon="crosshair"
-          disabled={findingPosition}
+          disabled={findingPosition || draftSaving}
           onPress={() => void capturePosition()}
         >
           {findingPosition ? 'Getting current position…' : 'Use current position'}
@@ -267,6 +367,11 @@ export default function PlannerScreen({
           <Notice tone="warning">
             {calculation.error} No current assessment is available until the inputs are valid.
           </Notice>
+        ) : null}
+        {latitudeError || longitudeError || rodeError ? (
+          <Button secondary onPress={focusInvalid}>
+            Review invalid inputs
+          </Button>
         ) : null}
         {assessment ? (
           <>
@@ -314,9 +419,12 @@ export default function PlannerScreen({
         <Eyebrow>2 · DEPLOYED RODE</Eyebrow>
         <Field
           label="Planned deployed rode"
+          disabled={draftSaving}
           value={rode}
           onChange={change(setRode)}
           numeric
+          error={rodeError}
+          inputRef={rodeInput}
           suffix={lengthInputUnit(units)}
           help="Optional. Recalculates the full footprint; confirm the actual deployed length on arrival."
         />
@@ -357,10 +465,19 @@ export default function PlannerScreen({
         <Button
           icon="radio"
           disabled={
-            nativeWatchAvailable && (!assessment || !!elapsedEvidence || !checks.every(Boolean))
+            evidenceLoading ||
+            draftSaving ||
+            findingPosition ||
+            choosingPoint ||
+            (nativeWatchAvailable && (!assessment || !!elapsedEvidence || !checks.every(Boolean)))
           }
           onPress={() => {
-            if (!nativeWatchAvailable) onWatch(candidate.position, undefined);
+            if (evidenceLoading || draftSaving || findingPosition || choosingPoint) return;
+            if (latitudeError || longitudeError || rodeError) {
+              focusInvalid();
+              return;
+            }
+            if (!nativeWatchAvailable) onWatch(pin.position, undefined, effectiveSearch);
             else if (assessment && checks.every(Boolean))
               onWatch(
                 pin.position,
@@ -383,12 +500,75 @@ export default function PlannerScreen({
         ) : null}
         <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
           A position watch can be set independently of an assessment. It does not validate this
-          anchorage or guarantee holding.
+          anchorage or guarantee holding. Continuing opens setup only; verify the physical anchor,
+          permissions and audible alarm before explicitly arming the watch.
           {!footprintResolved
             ? ' Enter and confirm an alarm radius in the watch; no radius is suggested from this unresolved footprint.'
             : ''}
         </Text>
       </Card>
+      {onSaveDraft ? (
+        <Card>
+          <Eyebrow>SAVE PLAN DRAFT</Eyebrow>
+          <Text style={{ fontSize: 12, lineHeight: 19, color: c.muted }}>
+            Saves proposed inputs for reassessment. Arrival checks and watch state are not saved.
+          </Text>
+          <Field
+            label="Plan name"
+            inputRef={draftNameInput}
+            disabled={draftSaving}
+            value={draftName}
+            onChange={(value) => {
+              setDraftName(value);
+              setDraftMessage('');
+            }}
+          />
+          {draftMessage ? <Notice>{draftMessage}</Notice> : null}
+          <Button
+            disabled={draftSaving || evidenceLoading || findingPosition || choosingPoint}
+            onPress={() => {
+              if (draftSaveLock.current) return;
+              const selectedPosition: Position = [parseInputDecimal(lon), parseInputDecimal(lat)];
+              const { deployedRodeM: _rode, ...planSearch } = effectiveSearch;
+              if (
+                !draftName.trim() ||
+                !lat.trim() ||
+                !lon.trim() ||
+                !selectedPosition.every(Number.isFinite) ||
+                Math.abs(selectedPosition[0]) > 180 ||
+                Math.abs(selectedPosition[1]) > 85 ||
+                validateSearch(planSearch).length ||
+                (rode.trim() &&
+                  (!Number.isFinite(deployedRodeM) || deployedRodeM < 1 || deployedRodeM > 1000))
+              ) {
+                setDraftMessage(
+                  'Enter a name, valid coordinates, search and optional rode before saving.',
+                );
+                if (!draftName.trim()) draftNameInput.current?.focus();
+                else focusInvalid();
+                return;
+              }
+              draftSaveLock.current = true;
+              setDraftSaving(true);
+              setDraftMessage('');
+              void onSaveDraft({
+                name: draftName.trim(),
+                selectedPosition,
+                ...(rode.trim() ? { plannedRodeM: deployedRodeM } : {}),
+                search: planSearch,
+              })
+                .then(() => setDraftMessage('Plan draft saved. Open it from Saved to reassess.'))
+                .catch((error) => setDraftMessage('Could not save the draft: ' + String(error)))
+                .finally(() => {
+                  draftSaveLock.current = false;
+                  setDraftSaving(false);
+                });
+            }}
+          >
+            {draftSaving ? 'Saving draft…' : 'Save draft'}
+          </Button>
+        </Card>
+      ) : null}
     </ScrollView>
   );
 }

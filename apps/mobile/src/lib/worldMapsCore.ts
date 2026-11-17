@@ -1,3 +1,4 @@
+import type { DeletionOutcome } from './deletion';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
 
@@ -42,6 +43,8 @@ export interface MapArea {
   refreshAfter: string;
   provider: typeof WORLD_MAP_PROVIDER;
   error?: string;
+  /** Durable tombstone: resources may already have been removed. */
+  cleanupPending?: boolean;
 }
 export interface MapAreaInput {
   name: string;
@@ -71,6 +74,7 @@ export interface MapCacheIO {
   saveManifest(manifest: MapAreaManifest): Promise<void>;
   read(id: string, path: string): Promise<Uint8Array | null>;
   write(id: string, path: string, bytes: Uint8Array): Promise<void>;
+  markForRemoval(id: string): Promise<boolean>;
   remove(id: string): Promise<void>;
   hash(bytes: Uint8Array): Promise<string>;
   fetch(url: string, signal: AbortSignal): Promise<Uint8Array>;
@@ -323,6 +327,8 @@ export function validateMapManifest(value: unknown): asserts value is MapAreaMan
 }
 export function createWorldMapCache(io: MapCacheIO) {
   let running: { id: string; controller: AbortController } | null = null;
+  let deleting = false;
+  let verifying = 0;
   const listeners = new Set<() => void>();
   const changed = () => {
     for (const listener of listeners) listener();
@@ -347,6 +353,15 @@ export function createWorldMapCache(io: MapCacheIO) {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const areas: MapArea[] = [];
     for (const summary of summaries) {
+      if (summary.cleanupPending) {
+        areas.push({
+          ...summary,
+          status: 'partial',
+          usableZoom: undefined,
+          error: 'Removal incomplete. This map is unavailable; retry deletion.',
+        });
+        continue;
+      }
       try {
         const manifest = await readVerifiedManifest(summary.id);
         if (manifest) areas.push(mapAreaReadiness(manifest));
@@ -363,6 +378,8 @@ export function createWorldMapCache(io: MapCacheIO) {
   };
   const readVerifiedManifest = async (id: string) => {
     if (!validMapId(id)) throw new Error('Invalid map area identifier.');
+    if ((await io.list()).some((area) => area.id === id && area.cleanupPending))
+      throw new Error('Map removal is incomplete; retry deletion.');
     const manifest = await io.readManifest(id);
     if (!manifest) return null;
     validateMapManifest(manifest);
@@ -371,47 +388,53 @@ export function createWorldMapCache(io: MapCacheIO) {
     return manifest;
   };
   const verifyMapArea = async (id: string) => {
-    const manifest = await readVerifiedManifest(id);
-    if (!manifest) return null;
-    let damaged = false;
-    for (const [path, resource] of Object.entries(manifest.resources)) {
-      const bytes = await io.read(id, path);
-      if (
-        !bytes ||
-        bytes.byteLength !== resource.bytes ||
-        (await io.hash(bytes)) !== resource.sha256
-      ) {
-        delete manifest.resources[path];
-        damaged = true;
+    if (deleting) throw new Error('Wait for map deletion to finish.');
+    verifying++;
+    try {
+      const manifest = await readVerifiedManifest(id);
+      if (!manifest) return null;
+      let damaged = false;
+      for (const [path, resource] of Object.entries(manifest.resources)) {
+        const bytes = await io.read(id, path);
+        if (
+          !bytes ||
+          bytes.byteLength !== resource.bytes ||
+          (await io.hash(bytes)) !== resource.sha256
+        ) {
+          delete manifest.resources[path];
+          damaged = true;
+        }
       }
-    }
-    if (damaged) {
-      manifest.area.status = 'partial';
-      manifest.area.error = 'Missing or damaged map resources. Resume to repair this area.';
-      manifest.area.bytes = Object.values(manifest.resources).reduce(
-        (sum, resource) => sum + resource.bytes,
-        0,
-      );
-      manifest.area.completedTiles = Object.values(manifest.resources).filter(
-        (resource) => resource.kind === 'tile',
-      ).length;
-      manifest.area.updatedAt = new Date().toISOString();
-      manifest.area = mapAreaReadiness(manifest);
-      // A renderer checking an older published snapshot must never overwrite a
-      // running download's newer manifest. That download verifies each reuse.
-      if (running?.id !== id) {
-        await io.saveManifest(manifest);
-        changed();
+      if (damaged) {
+        manifest.area.status = 'partial';
+        manifest.area.error = 'Missing or damaged map resources. Resume to repair this area.';
+        manifest.area.bytes = Object.values(manifest.resources).reduce(
+          (sum, resource) => sum + resource.bytes,
+          0,
+        );
+        manifest.area.completedTiles = Object.values(manifest.resources).filter(
+          (resource) => resource.kind === 'tile',
+        ).length;
+        manifest.area.updatedAt = new Date().toISOString();
+        manifest.area = mapAreaReadiness(manifest);
+        // A renderer checking an older published snapshot must never overwrite a
+        // running download's newer manifest. That download verifies each reuse.
+        if (running?.id !== id) {
+          await io.saveManifest(manifest);
+          changed();
+        }
       }
+      return mapAreaReadiness(manifest);
+    } finally {
+      verifying--;
     }
-    return mapAreaReadiness(manifest);
   };
   async function downloadMapArea(
     input: MapAreaInput,
     onProgress?: (area: MapArea) => void,
     signal?: AbortSignal,
   ): Promise<MapArea> {
-    if (running)
+    if (running || deleting)
       throw new Error(
         'One map area can download at a time. Cancel or finish the current download first.',
       );
@@ -595,11 +618,45 @@ export function createWorldMapCache(io: MapCacheIO) {
   const cancelMapArea = (id: string) => {
     if (running?.id === id) running.controller.abort();
   };
-  const deleteMapArea = async (id: string) => {
-    if (!validMapId(id)) throw new Error('Invalid map area identifier.');
-    if (running?.id === id) throw new Error('Cancel this download before deleting it.');
-    await io.remove(id);
-    changed();
+  const deleteMapArea = async (id: string): Promise<DeletionOutcome> => {
+    if (!validMapId(id)) return { status: 'unchanged', message: 'Invalid map area identifier.' };
+    if (running || deleting || verifying)
+      return {
+        status: 'unchanged',
+        message: 'Finish or cancel the current map operation before deleting.',
+      };
+    deleting = true;
+    let marked = false;
+    try {
+      marked = await io.markForRemoval(id);
+      if (!marked) return { status: 'complete' };
+      changed();
+      await io.remove(id);
+      changed();
+      return { status: 'complete' };
+    } catch (error) {
+      // If a storage adapter failed after committing, inspect durable index before reporting.
+      try {
+        const row = (await io.list()).find((area) => area.id === id);
+        if (!row && marked) {
+          changed();
+          return { status: 'complete' };
+        }
+        if (row?.cleanupPending) marked = true;
+      } catch {
+        /* Preserve conservative pending state after an ambiguous mutation. */
+      }
+      changed();
+      return marked
+        ? {
+            status: 'cleanup-pending',
+            message:
+              'Removal is incomplete. This map is unavailable; retry deletion. ' + String(error),
+          }
+        : { status: 'unchanged', message: 'Map was not removed. ' + String(error) };
+    } finally {
+      deleting = false;
+    }
   };
   return {
     downloadMapArea,

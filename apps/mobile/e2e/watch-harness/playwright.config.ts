@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: '.',
-  testMatch: 'watch.cases.ts',
+  testMatch: '*.cases.ts',
   outputDir: '../../../../.artifacts/watch-ui',
   workers: 1,
   use: {

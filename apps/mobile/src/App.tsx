@@ -13,6 +13,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Watch from '@anchor-buddy/anchor-watch';
+import * as Crypto from 'expo-crypto';
 import {
   createDefaultSearch,
   createVesselDraft,
@@ -21,6 +22,7 @@ import {
   validateLiveRegionPack,
   validateSearch,
   validateVessel,
+  vesselCompatibilityFingerprint,
   type Assessment,
   type AssessmentContext,
   type Candidate,
@@ -29,9 +31,11 @@ import {
   type SearchRequest,
   type UnitSystem,
   type VesselProfile,
+  type SavedPlanPayload,
 } from '@anchor-buddy/domain';
 import Chart from './components/Chart';
-import ResultCard from './components/ResultCard';
+import ResultCard, { StatusBadge } from './components/ResultCard';
+import { createResultPresentation } from './lib/resultPresentation';
 import Details from './components/Details';
 import { ProfileSheet, SearchSheet } from './components/Forms';
 import { Button, Card, Field, Icon, Notice, type IconName } from './components/ui';
@@ -47,7 +51,14 @@ import WatchScreen from './screens/WatchScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import SavedScreen from './screens/SavedScreen';
 import { getLocal, getLocalRaw, setLocal, removeLocal } from './lib/storage';
-import { createSettingsRepository } from './lib/settingsPersistence';
+import { createSettingsRepository, type MobileSettingsPayload } from './lib/settingsPersistence';
+import { completeSetup } from './lib/setupCompletion';
+import {
+  readStartupCategory,
+  type StartupCategory,
+  type StartupIssue,
+  type StartupResult,
+} from './lib/startupRecovery';
 import {
   createPreferenceCommands,
   type PreferenceKey,
@@ -61,22 +72,32 @@ const settingsRepository = createSettingsRepository({
 import { discoverRegion, findLocations } from './lib/regionalData';
 import { useConnectivity } from './lib/useConnectivity';
 import { useEvidenceRefresh } from './lib/useEvidenceRefresh';
+import { shouldRefreshEvidence } from './lib/connectivityCore';
+import { evidencePresentation } from './lib/evidencePresentation';
+import { createForecastStay, type ForecastStay } from './lib/forecastPresentation';
 import {
   cacheRegion,
   createEmptyRegion,
-  readRegionCache,
   regionContains,
   type RegionalData,
 } from './lib/regionalDataCore';
 import { listMapAreas, deleteMapArea, subscribeMapAreas, type MapArea } from './lib/worldMaps';
-import { depth, distance } from './lib/units';
+import { depth, distance, localTime } from './lib/units';
+import { addSavedSnapshot, SAVED_SEARCH_LIMIT } from './lib/savedCapacity';
+import {
+  createSavedPlansRepository,
+  planMaterialChanges,
+  prepareSavedPlan,
+  type PlanRecord,
+  type PlanRead,
+} from './lib/savedPlans';
+import { deleteEvidence, type DeletionOutcome, type EvidenceCleanup } from './lib/deletion';
 import { reassessSelection } from './lib/selectionAssessment';
 import {
   DEFAULT_FILTERS,
   DEFAULT_LAYERS,
   freshSearch,
   prepareSavedSearch,
-  readSavedSearches,
   stayLabel,
   type MapLayers,
   type ResultFilters,
@@ -85,6 +106,28 @@ import {
 import { colors as c } from './theme';
 import { useWorkspaceController } from './lib/useWorkspaceController';
 import { cacheCurrentEvidence, observeWatchStatus, type Tab } from './lib/workspaceController';
+
+const savedPlansRepository = createSavedPlansRepository({ getRaw: getLocalRaw, set: setLocal });
+const fingerprintVessel = (vessel: VesselProfile) =>
+  vesselCompatibilityFingerprint(vessel, async (bytes) =>
+    Array.from(
+      new Uint8Array(
+        await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, new Uint8Array(bytes).buffer),
+      ),
+    )
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join(''),
+  );
+const planSources = (pack: RegionPack): SavedPlanPayload['sourcePacks'] =>
+  pack.sources.length
+    ? [
+        {
+          id: pack.id,
+          version: pack.version,
+          ...(pack.snapshot ? { snapshotId: pack.snapshot.id } : {}),
+        },
+      ]
+    : [];
 
 const tabs: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'explore', label: 'Explore', icon: 'compass' },
@@ -143,7 +186,14 @@ function AnchorApp() {
   const isModal = (name: import('./lib/workspaceController').ModalName) =>
     workspace.modal?.name === name;
   const dataOpen = isModal('data');
-  const setDataOpen = (v: boolean) => setModal('data', v);
+  const [sourceStay, setSourceStay] = useState<ForecastStay | null>(null);
+  const setDataOpen = (v: boolean, stay?: ForecastStay | null) => {
+    if (v)
+      setSourceStay(
+        stay === undefined ? (activeSearch ? createForecastStay(activeSearch) : null) : stay,
+      );
+    setModal('data', v);
+  };
   const profileOpen = isModal('profile');
   const setProfileOpen = (v: boolean) => setModal('profile', v);
   const defaultsOpen = isModal('defaults');
@@ -162,6 +212,10 @@ function AnchorApp() {
   const wide = width >= 960;
   const [pack, setPack] = useState(() => createEmptyRegion(UNSELECTED_ORIGIN, 3));
   const [regionCache, setRegionCache] = useState<RegionalData[]>([]);
+  const [pendingEvidence, setPendingEvidence] = useState<EvidenceCleanup[]>([]);
+  const pendingEvidenceRef = useRef<EvidenceCleanup[]>([]);
+  const evidenceDeletionLock = useRef(false);
+  const savedDeletionLock = useRef(false);
   const [regionData, setRegionData] = useState<RegionalData | null>(null);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState('');
@@ -182,15 +236,40 @@ function AnchorApp() {
   const [defaults, setDefaults] = useState<SearchRequest>(() =>
     createDefaultSearch(UNSELECTED_ORIGIN),
   );
-  const [ready, setReady] = useState(false);
+  const [startupLoadingSettings, setStartupLoadingSettings] = useState(true);
+  const ready = !startupLoadingSettings;
+  const startupCategories: StartupCategory[] = [
+    'settings',
+    'searches',
+    'evidence',
+    'region',
+    'evidence-cleanup',
+  ];
+  const [startupIssues, setStartupIssues] = useState<
+    Partial<Record<StartupCategory, StartupIssue>>
+  >({});
+  const startupBlocked = useRef<Partial<Record<StartupCategory, boolean>>>({
+    settings: true,
+    searches: true,
+    evidence: true,
+    region: true,
+    'evidence-cleanup': true,
+  });
+  const startupResults = useRef<Partial<Record<StartupCategory, StartupResult>>>({});
+  const startupGeneration = useRef<Partial<Record<StartupCategory, number>>>({});
+  const startupLive = useRef(true);
+  const startupSetupDecided = useRef(false);
   const [units, setUnits] = useState<UnitSystem>('nautical');
   const [offlinePreference, setOffline] = useState(false);
   const connectivity = useConnectivity();
   const offline = offlinePreference || connectivity === 'offline';
   const [layers, setLayers] = useState<MapLayers>(DEFAULT_LAYERS);
   const [preferenceStatuses, setPreferenceStatuses] = useState<PreferenceStatuses>({});
+  const preferenceStatusRef = useRef<PreferenceStatuses>({});
   const [preferenceCommands] = useState(() =>
     createPreferenceCommands(settingsRepository.commit, (key, status) => {
+      if (status) preferenceStatusRef.current[key] = status;
+      else delete preferenceStatusRef.current[key];
       setPreferenceStatuses((previous) => {
         const next = { ...previous };
         if (status) next[key] = status;
@@ -203,19 +282,33 @@ function AnchorApp() {
   );
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedSearch[]>([]);
+  const [savedPlans, setSavedPlans] = useState<PlanRecord[]>([]);
+  const [savedPlansIssue, setSavedPlansIssue] = useState<PlanRead['issue']>();
+  const [currentVesselFingerprint, setCurrentVesselFingerprint] = useState('');
+  const pendingPlanReview = useRef<PlanRecord | null>(null);
+  const planRestoreGeneration = useRef(0);
+  const planReadGeneration = useRef(0);
+  const planCandidateIds = useRef(new Map<number, string>());
+  const planInputs = useRef({ vessel, pack });
+  planInputs.current = { vessel, pack };
+  const [reassessingVessel, setReassessingVessel] = useState<string | null>(null);
   const planSequence = useRef(0);
   const [watchStatus, setWatchStatus] = useState<Watch.WatchStatus | null>(null);
+  const latestWatchStatus = useRef<Watch.WatchStatus | null>(null);
   const lastWatchContact = useRef(-Infinity);
   const previouslyActive = useRef(false);
   const [watchClock, setWatchClock] = useState(monotonicNow);
   const [reviewingSetup, setReviewingSetup] = useState(false);
   const [setupSaving, setSetupSaving] = useState(false);
+  const setupSaveLock = useRef(false);
   const [setupError, setSetupError] = useState('');
   const [vesselConfigured, setVesselConfigured] = useState(false);
   const [defaultsConfigured, setDefaultsConfigured] = useState(false);
   const [saveName, setSaveName] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [replaceSavedId, setReplaceSavedId] = useState<string | undefined>();
+  const saveResultsLock = useRef(false);
   const [message, setMessage] = useState('');
   const [assessedAt, setAssessedAt] = useState(() => new Date().toISOString());
   const context = useMemo<AssessmentContext>(
@@ -224,6 +317,39 @@ function AnchorApp() {
   );
   const notifyError = (error: unknown) =>
     setMessage(error instanceof Error ? error.message : String(error));
+  const refreshSavedPlans = async () => {
+    const generation = ++planReadGeneration.current;
+    const result = await savedPlansRepository.read();
+    if (mounted.current && generation === planReadGeneration.current) {
+      setSavedPlans(result.records);
+      setSavedPlansIssue(result.issue);
+    }
+  };
+  useEffect(() => {
+    void refreshSavedPlans();
+  }, []);
+  useEffect(() => {
+    let live = true;
+    if (!vesselConfigured) {
+      setCurrentVesselFingerprint('');
+      return () => {
+        live = false;
+      };
+    }
+    void fingerprintVessel(vessel)
+      .then((value) => {
+        if (live) setCurrentVesselFingerprint(value);
+      })
+      .catch(() => {
+        if (live) setCurrentVesselFingerprint('');
+      });
+    return () => {
+      live = false;
+    };
+  }, [vessel, vesselConfigured]);
+  useEffect(() => {
+    planRestoreGeneration.current++;
+  }, [tab, flow]);
   const persist = async (key: string, value: unknown) => {
     try {
       await setLocal(key, value);
@@ -231,77 +357,99 @@ function AnchorApp() {
       setMessage('Could not save on this device: ' + String(error));
     }
   };
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      try {
-        const [region, settings, searches, setup, evidence] = await Promise.all([
-          getLocal<{ pack: RegionPack; savedAt: string }>('active-region'),
-          settingsRepository.read(),
-          getLocal<unknown>('saved-searches'),
-          getLocal<boolean>('setup-complete-v2'),
-          getLocal<unknown>('regional-evidence-v1'),
-        ]);
-        if (!live) return;
-        const cached = readRegionCache(evidence);
-        setRegionCache(cached);
-        if (region?.pack && !validateLiveRegionPack(region.pack).length) {
+  const applyStartup = (result: StartupResult) => {
+    const { category, issue, value, missing } = result;
+    startupResults.current[category] = result;
+    startupBlocked.current[category] = !!issue;
+    setStartupIssues((previous) => {
+      const next = { ...previous };
+      if (issue) next[category] = issue;
+      else delete next[category];
+      return next;
+    });
+    if (category === 'settings' && !issue && value) {
+      const settings = value as MobileSettingsPayload;
+      const boat = settings.vessel;
+      setVesselConfigured(settings.confirmed.vessel);
+      if (boat)
+        setVessel({
+          ...boat,
+          id: 'local-vessel',
+          anchor: {
+            ...boat.anchor,
+            scopeGuidance:
+              boat.anchor.scopeGuidance?.reviewStatus === 'reviewed'
+                ? boat.anchor.scopeGuidance
+                : null,
+          },
+        });
+      setUnits(settings.units);
+      setOffline(settings.offline);
+      setLayers(settings.layers);
+      if (settings.searchDefaults)
+        setDefaults({
+          ...settings.searchDefaults,
+          preferredBeddings: getPreferredBeddings(settings.searchDefaults),
+          preferredBedding: undefined,
+        });
+      setDefaultsConfigured(settings.confirmed.defaults);
+    }
+    if (category === 'searches' && value) setSaved(value as SavedSearch[]);
+    if (category === 'evidence' || category === 'region' || category === 'evidence-cleanup') {
+      const markerResult = startupResults.current['evidence-cleanup'];
+      if (markerResult && !markerResult.issue) {
+        const pending = (markerResult.value as EvidenceCleanup[] | undefined) ?? [];
+        pendingEvidenceRef.current = pending;
+        setPendingEvidence(pending);
+        const cached = startupResults.current.evidence?.value as RegionalData[] | undefined;
+        if (cached)
+          setRegionCache(cached.filter((row) => !pending.some((item) => item.id === row.pack.id)));
+        const region = startupResults.current.region?.value as
+          { pack: RegionPack; savedAt: string } | undefined;
+        if (region && !pending.some((item) => item.id === region.pack.id)) {
           setPack(region.pack);
           setSavedAt(region.savedAt);
-          setRegionData(cached.find((row) => row.pack.id === region.pack.id) ?? null);
+          setRegionData(cached?.find((row) => row.pack.id === region.pack.id) ?? null);
         }
-        if (settings.status !== 'supported') throw new Error(settings.error);
-        const { vessel: boat, searchDefaults: nextDefaults, confirmed } = settings.value;
-        const prefs = settings.value;
-        setVesselConfigured(confirmed.vessel);
-        if (boat && !validateVessel(boat).length) {
-          setVessel({
-            ...boat,
-            id: 'local-vessel',
-            anchor: {
-              ...boat.anchor,
-              scopeGuidance:
-                boat.anchor.scopeGuidance?.reviewStatus === 'reviewed'
-                  ? boat.anchor.scopeGuidance
-                  : null,
-            },
-          });
-        }
-        if (prefs) {
-          if (['nautical', 'metric', 'imperial'].includes(prefs.units)) setUnits(prefs.units);
-          setOffline(prefs.offline === true);
-          if (
-            prefs.layers &&
-            ['depth', 'bedding', 'marks'].every(
-              (k) => typeof prefs.layers?.[k as keyof MapLayers] === 'boolean',
-            )
-          )
-            setLayers(prefs.layers);
-        }
-        if (nextDefaults && !validateSearch(nextDefaults).length)
-          setDefaults({
-            ...nextDefaults,
-            preferredBeddings: getPreferredBeddings(nextDefaults),
-            preferredBedding: undefined,
-          });
-        setDefaultsConfigured(confirmed.defaults);
-        setSaved(readSavedSearches(searches));
-        setSetupOpen(
-          setup !== true || !confirmed.vessel || !boat || validateVessel(boat).length > 0,
-        );
-      } catch (error) {
-        if (live) {
-          notifyError(error);
-          setSetupOpen(true);
-        }
-      } finally {
-        if (live) setReady(true);
       }
-    })();
+    }
+    const settings = startupResults.current.settings;
+    if (settings) setStartupLoadingSettings(false);
+    if (
+      !startupSetupDecided.current &&
+      !pendingEvidenceRef.current.length &&
+      startupCategories.every(
+        (key) => startupResults.current[key] && !startupResults.current[key]?.issue,
+      ) &&
+      settings
+    ) {
+      const payload = settings.value as MobileSettingsPayload;
+      startupSetupDecided.current = true;
+      setSetupOpen(!payload.setupComplete);
+    }
+  };
+  const retryStartup = (category: StartupCategory) => {
+    const generation = (startupGeneration.current[category] ?? 0) + 1;
+    startupGeneration.current[category] = generation;
+    startupBlocked.current[category] = true;
+    void readStartupCategory(category, getLocalRaw, settingsRepository.read).then((result) => {
+      if (startupLive.current && startupGeneration.current[category] === generation)
+        applyStartup(result);
+    });
+  };
+  useEffect(() => {
+    startupLive.current = true;
+    startupCategories.forEach(retryStartup);
     return () => {
-      live = false;
+      startupLive.current = false;
     };
   }, []);
+  const assertStartupWritable = (category: StartupCategory) => {
+    if (startupBlocked.current[category])
+      throw new Error(
+        `Stored ${category} data needs recovery before it can be changed. Retry from the recovery notice.`,
+      );
+  };
   const refreshMapAreas = () =>
     void listMapAreas()
       .then((areas) => {
@@ -335,9 +483,13 @@ function AnchorApp() {
       lastWatchContact.current = monotonicNow();
       setWatchClock(lastWatchContact.current);
       previouslyActive.current = activeWatchStates.has(status.state);
+      latestWatchStatus.current = status;
       setWatchStatus(status);
     };
-    const observer = observeWatchStatus(Watch, accept, () => setWatchStatus(null));
+    const observer = observeWatchStatus(Watch, accept, () => {
+      latestWatchStatus.current = null;
+      setWatchStatus(null);
+    });
     void observer.refresh();
     const timer = setInterval(() => {
       setWatchClock(monotonicNow());
@@ -346,6 +498,7 @@ function AnchorApp() {
     }, 5000);
     const listener = AppState.addEventListener('change', (state) => {
       observer.invalidate();
+      latestWatchStatus.current = null;
       setWatchStatus(null);
       if (state === 'active') void observer.refresh();
     });
@@ -398,26 +551,42 @@ function AnchorApp() {
     [customPin, activeSearch, pack, vessel, context, vesselReady],
   );
   const assessments = result?.assessments ?? [];
-  const mapAssessments = useMemo(
-    () => (custom ? [custom, ...(result?.assessments ?? [])] : (result?.assessments ?? [])),
-    [custom, result],
+  const resultsWithoutDisplayFilters = useMemo(() => {
+    if (!activeSearch || !vesselReady || !result || result.assessments.length) return 0;
+    return searchRegion(
+      pack,
+      vessel,
+      activeSearch,
+      {
+        sortBy: filters.sort,
+        gridSpacingM: 500,
+        maxGeneratedCandidates: 120,
+        clusterDistanceM: 500,
+      },
+      context,
+    ).assessments.length;
+  }, [activeSearch, vesselReady, result, pack, vessel, filters.sort, context]);
+  const displayResults = useMemo(
+    () => createResultPresentation(result?.assessments ?? [], selectedId, custom),
+    [result, selectedId, custom],
   );
+  const assessedSearch = detailSearch ?? activeSearch;
   const detailState = useMemo(
     () =>
-      detail && activeSearch && vesselReady
+      detail && assessedSearch && vesselReady
         ? reassessSelection(
             detail.candidate,
             vessel,
-            detailSearch ?? activeSearch,
+            assessedSearch,
             pack,
             context,
             detail.allowance,
           )
         : null,
-    [detail, detailSearch, activeSearch, vessel, pack, context, vesselReady],
+    [detail, assessedSearch, vessel, pack, context, vesselReady],
   );
   const currentDetail = detailState?.assessment ?? null;
-  const selected = mapAssessments.find((a) => a.id === selectedId);
+  const selected = displayResults.selected?.assessment;
   const watchActive = !!watchStatus && activeWatchStates.has(watchStatus.state);
   const watchUnverified =
     previouslyActive.current && (!watchStatus || watchClock - lastWatchContact.current > 12_000);
@@ -486,30 +655,67 @@ function AnchorApp() {
           },
     });
   };
-  const updateEvidenceCache = (update: (previous: RegionalData[]) => RegionalData[]) => {
+  const updateEvidenceCache = (
+    update: (previous: RegionalData[]) => RegionalData[],
+    allowCleanup = false,
+  ) => {
     const task = evidenceWrites.current.then(async () => {
-      const next = update(readRegionCache(await getLocal('regional-evidence-v1')));
+      assertStartupWritable('evidence');
+      assertStartupWritable('evidence-cleanup');
+      if (!allowCleanup && pendingEvidenceRef.current.length)
+        throw new Error('Complete pending evidence removal before changing cached data.');
+      const current = await readStartupCategory('evidence', getLocalRaw, settingsRepository.read);
+      if (current.issue) throw new Error(current.issue.message);
+      const previous = (current.value as RegionalData[] | undefined) ?? [];
+      const next = update(previous);
+      if (next === previous) return;
+      startupGeneration.current.evidence = (startupGeneration.current.evidence ?? 0) + 1;
       await setLocal('regional-evidence-v1', next);
-      if (mounted.current) setRegionCache(next);
+      startupResults.current.evidence = { category: 'evidence', value: next };
+      if (mounted.current)
+        setRegionCache(
+          next.filter((row) => !pendingEvidenceRef.current.some((item) => item.id === row.pack.id)),
+        );
     });
     evidenceWrites.current = task.catch(() => {});
     return task;
   };
-  const saveRegionalData = async (data: RegionalData) => {
-    const stored = { ...data, savedAt: new Date().toISOString() };
-    await updateEvidenceCache((previous) => cacheRegion(previous, stored));
-    return stored;
+  const saveRegionalData = async (
+    data: RegionalData,
+    retention: 'automatic' | 'retained' = 'automatic',
+  ) => {
+    const stored = { ...data, savedAt: new Date().toISOString(), retention };
+    let skipped = false;
+    await updateEvidenceCache((previous) => {
+      const next = cacheRegion(previous, stored);
+      skipped = next === previous;
+      return next;
+    });
+    return skipped ? { ...data, savedAt: undefined } : stored;
+  };
+  const setEvidenceRetention = async (id: string, retention: 'automatic' | 'retained') => {
+    await updateEvidenceCache((previous) => {
+      if (!previous.some((row) => row.pack.id === id))
+        throw new Error('This cached data is no longer available.');
+      return previous.map((row) => (row.pack.id === id ? { ...row, retention } : row));
+    });
   };
   const loadSearchData = async (
     search: SearchRequest,
     forceLive = false,
     regionName?: string,
     timezone?: string,
+    reassessmentVessel?: string,
   ) => {
     cancelDataRequest();
     const request = generation.current.begin();
     const controller = new AbortController();
     dataRequest.current = controller;
+    setReassessingVessel(reassessmentVessel ?? null);
+    const announceReassessment = (outcome: string) => {
+      if (reassessmentVessel && !controller.signal.aborted && generation.current.current(request))
+        setMessage(`Reassessed with ${reassessmentVessel}. ${outcome}`);
+    };
     setDataError('');
     const cached = regionCache.find((row) =>
       regionContains(row.pack, search.origin, search.maxDistanceNm),
@@ -517,12 +723,19 @@ function AnchorApp() {
     const keepReviewed =
       pack.validation.status === 'reviewed' &&
       regionContains(pack, search.origin, search.maxDistanceNm);
+    const keepAvailable =
+      pack.sources.length > 0 && regionContains(pack, search.origin, search.maxDistanceNm);
     if (offline) {
       setDataLoading(false);
       if (cached && !keepReviewed) {
         setPack(cached.pack);
         setRegionData(cached);
         setSavedAt(cached.savedAt ?? null);
+        announceReassessment(
+          'Using downloaded evidence with its original dates; coverage and freshness may be incomplete.',
+        );
+      } else if (keepReviewed) {
+        announceReassessment('Using the retained reviewed pack with its original source dates.');
       } else if (
         !regionContains(pack, search.origin, search.maxDistanceNm) ||
         pack.validation.status === 'synthetic'
@@ -535,20 +748,26 @@ function AnchorApp() {
         setRegionData(null);
         setSavedAt(null);
         setDataError(
-          'No downloaded nautical evidence covers this search. Cached display maps remain available; reconnect to load place and weather data.',
+          'No downloaded nautical evidence covers this search. Reconnect to load place and weather data.',
+        );
+        announceReassessment(
+          'No downloaded evidence covers this area. Reconnect to load sources; suitability remains unresolved.',
+        );
+      } else {
+        announceReassessment(
+          pack.sources.length
+            ? 'Using evidence retained in this session with its original dates; coverage and freshness may be incomplete.'
+            : 'No nautical evidence is available for this area. Reconnect to load sources; suitability remains unresolved.',
         );
       }
       return;
     }
     setDataLoading(true);
-    if (cached && !keepReviewed) {
+    if (cached && !keepReviewed && !keepAvailable) {
       setPack(cached.pack);
       setRegionData(cached);
       setSavedAt(cached.savedAt ?? null);
-    } else if (
-      pack.validation.status !== 'reviewed' ||
-      !regionContains(pack, search.origin, search.maxDistanceNm)
-    ) {
+    } else if (!keepReviewed && !keepAvailable) {
       try {
         setPack(createEmptyRegion(search.origin, search.maxDistanceNm, regionName));
       } catch (error) {
@@ -565,36 +784,54 @@ function AnchorApp() {
       if (controller.signal.aborted || !generation.current.current(request)) return;
       // A separately reviewed chart pack remains authoritative. Live discovery cannot downgrade it.
       if (keepReviewed) {
-        setRegionData(loaded);
+        setRegionData({ ...loaded, savedAt: undefined });
         setDataError(
           'Live source observations loaded. The reviewed assessment pack remains active; refresh its published version in Settings for updated analysis.',
         );
       } else {
         setPack(loaded.pack);
-        setRegionData(loaded);
+        setRegionData({ ...loaded, savedAt: undefined });
+        setSavedAt(null);
       }
       setAssessedAt(new Date().toISOString());
       try {
         await cacheCurrentEvidence(
           loaded,
-          saveRegionalData,
+          (data) => saveRegionalData(data, 'automatic'),
           () => !controller.signal.aborted && generation.current.current(request),
           (stored) => {
             if (!keepReviewed) setSavedAt(stored.savedAt ?? null);
+            setRegionData(stored);
           },
         );
       } catch (error) {
         if (!controller.signal.aborted && generation.current.current(request))
-          setDataError('Live data loaded, but could not be cached: ' + String(error));
+          setDataError(
+            'Live data loaded, but could not be cached. Manage cached data in Saved, then retry: ' +
+              String(error),
+          );
       }
+      announceReassessment(
+        keepReviewed
+          ? 'Live observations loaded; the retained reviewed assessment pack remains active.'
+          : loaded.partial
+            ? 'New observations loaded with partial evidence. Review missing coverage and original source dates.'
+            : 'New observations loaded. Review source dates and the assessment before proceeding.',
+      );
     } catch (error) {
-      if (!controller.signal.aborted && generation.current.current(request))
+      if (!controller.signal.aborted && generation.current.current(request)) {
         setDataError(
           (error instanceof Error ? error.message : String(error)) +
-            (cached
+            (cached || keepAvailable || keepReviewed
               ? ' Previously downloaded evidence is retained with its original dates.'
               : ' No sample results have been substituted.'),
         );
+        announceReassessment(
+          cached || keepAvailable || keepReviewed
+            ? 'Live retrieval failed. Retained evidence keeps its original dates and may be incomplete or expired.'
+            : 'Live retrieval failed and no evidence is available for this area. Suitability remains unresolved.',
+        );
+      }
     } finally {
       if (generation.current.current(request)) setDataLoading(false);
     }
@@ -614,10 +851,52 @@ function AnchorApp() {
       setDataLoading(false);
     },
   });
+  const evidenceState = evidencePresentation({
+    preference: offlinePreference,
+    connectivity,
+    loading: dataLoading,
+    error: dataError,
+    hasEvidence: pack.sources.length > 0,
+    partial: regionData?.partial ?? pack.validation.status !== 'reviewed',
+    expiresAt: pack.validUntil,
+    now: Date.parse(assessedAt),
+    lastAttempt: lastLiveAttempt.current,
+    selectedArea: !!activeSearch || !!previewArea,
+  });
+  useEffect(() => {
+    const remaining = lastLiveAttempt.current + 60_000 - Date.now();
+    if (remaining <= 0) return;
+    const timer = setTimeout(() => setAssessedAt(new Date().toISOString()), remaining + 10);
+    return () => clearTimeout(timer);
+  }, [dataLoading, assessedAt]);
+  const retryEvidence = () => {
+    if (
+      !shouldRefreshEvidence({
+        offline,
+        active: !!activeSearch || !!previewArea,
+        loading: dataLoading,
+        now: Date.now(),
+        lastAttempt: lastLiveAttempt.current,
+        force: true,
+      })
+    )
+      return;
+    void loadSearchData(
+      activeSearch ?? {
+        ...freshSearch(defaults),
+        origin: previewArea!.center,
+        maxDistanceNm: previewArea!.radiusNm,
+      },
+      true,
+      activeAreaName,
+      activeAreaTimezone,
+    );
+  };
   const submitSearch = (
     search: SearchRequest,
-    selection?: { regionName: string; timezone: string },
+    selection?: { regionName: string; timezone?: string },
     restore?: { filters?: ResultFilters; pin?: Position },
+    reassessmentVessel?: string,
   ) => {
     if (!requireVessel()) return;
     dispatch({
@@ -628,7 +907,13 @@ function AnchorApp() {
       pin: restore?.pin,
     });
     setAssessedAt(new Date().toISOString());
-    void loadSearchData(search, false, selection?.regionName, selection?.timezone);
+    void loadSearchData(
+      search,
+      false,
+      selection?.regionName,
+      selection?.timezone,
+      reassessmentVessel,
+    );
   };
   const closeSearch = () => {
     cancelDataRequest();
@@ -650,6 +935,10 @@ function AnchorApp() {
     radiusNm: Math.min(50, (area.bounds[3] - area.bounds[1]) * 30),
   });
   const openCachedMap = (area: MapArea) => {
+    if (area.cleanupPending) {
+      setMessage('Map removal is incomplete. Retry deletion in Saved.');
+      return;
+    }
     cancelDataRequest();
     setDataLoading(false);
     setDataError('');
@@ -669,6 +958,13 @@ function AnchorApp() {
     }
   };
   const openCachedRegion = (data: RegionalData) => {
+    if (
+      startupBlocked.current['evidence-cleanup'] ||
+      pendingEvidenceRef.current.some((item) => item.id === data.pack.id)
+    ) {
+      setMessage('Evidence removal needs attention. Retry deletion in Saved.');
+      return;
+    }
     cancelDataRequest();
     setDataLoading(false);
     setDataError('');
@@ -689,35 +985,115 @@ function AnchorApp() {
     });
     setAssessedAt(new Date().toISOString());
   };
-  const removeCachedRegion = (id: string) =>
-    void (async () => {
-      if (pack.id === id && (watchActive || watchUnverified)) {
-        setMessage(
-          'Keep the current evidence while the anchor watch is active or its status is unverified.',
-        );
-        return;
-      }
-      if (pack.id === id) {
-        cancelDataRequest();
-        setDataLoading(false);
-      }
-      await updateEvidenceCache((previous) => previous.filter((row) => row.pack.id !== id));
-      if (pack.id === id) {
-        await removeLocal('active-region');
-        setSavedAt(null);
-        setRegionData(null);
-        setPack(
-          createEmptyRegion(
-            activeSearch?.origin ?? previewArea?.center ?? UNSELECTED_ORIGIN,
-            activeSearch?.maxDistanceNm ?? previewArea?.radiusNm ?? 3,
-          ),
-        );
-        dispatch({ type: 'invalidateEvidence' });
-        setDataError(
-          'Cached evidence removed. Refresh Sources & coverage to download this area again.',
-        );
-      }
-    })().catch(notifyError);
+  const removeCachedRegion = async (id: string, name: string): Promise<DeletionOutcome> => {
+    if (evidenceDeletionLock.current)
+      return { status: 'unchanged', message: 'Another removal is in progress.' };
+    evidenceDeletionLock.current = true;
+    try {
+      return await deleteEvidence(
+        { id, name },
+        {
+          readMarkers: async () => {
+            assertStartupWritable('evidence-cleanup');
+            const result = await readStartupCategory(
+              'evidence-cleanup',
+              getLocalRaw,
+              settingsRepository.read,
+            );
+            if (result.issue) throw new Error(result.issue.message);
+            return (result.value as EvidenceCleanup[] | undefined) ?? [];
+          },
+          writeMarkers: (rows) => setLocal('evidence-cleanup-v1', rows),
+          onPending: (rows) => {
+            pendingEvidenceRef.current = rows;
+            setPendingEvidence(rows);
+            startupResults.current['evidence-cleanup'] = {
+              category: 'evidence-cleanup',
+              value: rows,
+            };
+            if (rows.some((item) => item.id === id)) {
+              setRegionCache((previous) => previous.filter((row) => row.pack.id !== id));
+              if (pack.id === id && !previouslyActive.current && !watchUnverified) {
+                cancelDataRequest();
+                setDataLoading(false);
+                setSavedAt(null);
+                setRegionData(null);
+                setPack(
+                  createEmptyRegion(
+                    activeSearch?.origin ?? previewArea?.center ?? UNSELECTED_ORIGIN,
+                    activeSearch?.maxDistanceNm ?? previewArea?.radiusNm ?? 3,
+                  ),
+                );
+                dispatch({ type: 'invalidateEvidence' });
+              }
+            }
+          },
+          ensureAllowed: async () => {
+            assertStartupWritable('evidence');
+            assertStartupWritable('region');
+            const current = await readStartupCategory(
+              'region',
+              getLocalRaw,
+              settingsRepository.read,
+            );
+            if (current.issue) throw new Error(current.issue.message);
+            const active = current.value as { pack: RegionPack } | undefined;
+            const age = monotonicNow() - lastWatchContact.current;
+            const status = latestWatchStatus.current;
+            if (
+              (active?.pack.id === id || pack.id === id) &&
+              (!status ||
+                status.serviceRunning ||
+                activeWatchStates.has(status.state) ||
+                !Number.isFinite(age) ||
+                age < 0 ||
+                age > 12_000)
+            )
+              throw new Error(
+                'Keep the current evidence while the anchor watch is active or its status is unverified.',
+              );
+          },
+          removeCache: async (target) => {
+            await updateEvidenceCache(
+              (previous) => previous.filter((row) => row.pack.id !== target),
+              true,
+            );
+          },
+          removeActive: async (target) => {
+            const current = await readStartupCategory(
+              'region',
+              getLocalRaw,
+              settingsRepository.read,
+            );
+            if (current.issue) throw new Error(current.issue.message);
+            if ((current.value as { pack: RegionPack } | undefined)?.pack.id === target) {
+              startupGeneration.current.region = (startupGeneration.current.region ?? 0) + 1;
+              await removeLocal('active-region');
+              startupResults.current.region = { category: 'region', missing: true };
+            }
+            if (pack.id === target) {
+              cancelDataRequest();
+              setDataLoading(false);
+              setSavedAt(null);
+              setRegionData(null);
+              setPack(
+                createEmptyRegion(
+                  activeSearch?.origin ?? previewArea?.center ?? UNSELECTED_ORIGIN,
+                  activeSearch?.maxDistanceNm ?? previewArea?.radiusNm ?? 3,
+                ),
+              );
+              dispatch({ type: 'invalidateEvidence' });
+              setDataError(
+                'Cached evidence removed. Refresh Sources & coverage to download this area again.',
+              );
+            }
+          },
+        },
+      );
+    } finally {
+      evidenceDeletionLock.current = false;
+    }
+  };
   const saveVessel = async (next: VesselProfile) => {
     const result = await settingsRepository.commit((current) => ({
       vessel: next,
@@ -742,17 +1118,26 @@ function AnchorApp() {
     if (!pack.sources.length)
       throw new Error('Choose an area and load real source data before saving analysis.');
     const time = new Date().toISOString();
+    assertStartupWritable('region');
+    assertStartupWritable('evidence-cleanup');
+    if (pendingEvidenceRef.current.length)
+      throw new Error('Complete pending evidence removal before saving regional analysis.');
+    if (regionData) await saveRegionalData(regionData, 'retained');
+    startupGeneration.current.region = (startupGeneration.current.region ?? 0) + 1;
     await setLocal('active-region', { pack, savedAt: time });
+    startupResults.current.region = { category: 'region', value: { pack, savedAt: time } };
     setSavedAt(time);
-    if (regionData) await saveRegionalData(regionData);
   };
   const changePack = (next: RegionPack) => {
     if (validateLiveRegionPack(next).length) {
       setMessage('Regional data was rejected because its provenance could not be verified.');
       return;
     }
+    const time = new Date().toISOString();
+    startupGeneration.current.region = (startupGeneration.current.region ?? 0) + 1;
+    startupResults.current.region = { category: 'region', value: { pack: next, savedAt: time } };
     setPack(next);
-    setSavedAt(new Date().toISOString());
+    setSavedAt(time);
     closeSearch();
     setAssessedAt(new Date().toISOString());
     setRegionData(null);
@@ -785,7 +1170,8 @@ function AnchorApp() {
     select(checked.assessment);
   };
   const saveResults = async () => {
-    if (!activeSearch || saving) return;
+    if (!activeSearch || saveResultsLock.current) return;
+    saveResultsLock.current = true;
     setSaving(true);
     setSaveError('');
     try {
@@ -810,23 +1196,70 @@ function AnchorApp() {
           currency: a.cost.currency,
         })),
       };
-      const next = [snapshot, ...saved].slice(0, 30);
+      assertStartupWritable('searches');
+      const current = await readStartupCategory('searches', getLocalRaw, settingsRepository.read);
+      if (current.issue) throw new Error(current.issue.message);
+      const existing = (current.value as SavedSearch[] | undefined) ?? [];
+      setSaved(existing);
+      const next = addSavedSnapshot(existing, snapshot, replaceSavedId);
+      startupGeneration.current.searches = (startupGeneration.current.searches ?? 0) + 1;
       await setLocal('saved-searches', next);
+      startupResults.current.searches = { category: 'searches', value: next };
       setSaved(next);
       setSaveOpen(false);
-      setMessage('Results saved. Open them from Saved.');
+      setMessage(
+        existing.length === SAVED_SEARCH_LIMIT && replaceSavedId
+          ? 'Saved results and replaced the selected snapshot.'
+          : 'Results saved. Open them from Saved.',
+      );
     } catch (error) {
       setSaveError('Could not save results on this device: ' + String(error));
     } finally {
+      saveResultsLock.current = false;
       setSaving(false);
     }
   };
-  const deleteSaved = (id: string) =>
-    void (async () => {
-      const next = saved.filter((s) => s.id !== id);
+  const deleteSaved = async (id: string): Promise<DeletionOutcome> => {
+    if (savedDeletionLock.current)
+      return { status: 'unchanged', message: 'Another deletion is in progress.' };
+    savedDeletionLock.current = true;
+    let attempted = false;
+    try {
+      assertStartupWritable('searches');
+      const current = await readStartupCategory('searches', getLocalRaw, settingsRepository.read);
+      if (current.issue) throw new Error(current.issue.message);
+      const next = ((current.value as SavedSearch[] | undefined) ?? []).filter(
+        (item) => item.id !== id,
+      );
+      attempted = true;
+      startupGeneration.current.searches = (startupGeneration.current.searches ?? 0) + 1;
       await setLocal('saved-searches', next);
+      startupResults.current.searches = { category: 'searches', value: next };
       setSaved(next);
-    })().catch(notifyError);
+      return { status: 'complete' };
+    } catch (error) {
+      if (attempted) {
+        const observed = await readStartupCategory(
+          'searches',
+          getLocalRaw,
+          settingsRepository.read,
+        );
+        if (observed.issue)
+          return {
+            status: 'cleanup-pending',
+            message:
+              'Could not verify whether the search was removed. Retry. ' + observed.issue.message,
+          };
+        const current = (observed.value as SavedSearch[] | undefined) ?? [];
+        startupResults.current.searches = { category: 'searches', value: current };
+        setSaved(current);
+        if (!current.some((item) => item.id === id)) return { status: 'complete' };
+      }
+      return { status: 'unchanged', message: 'Search was not removed. ' + String(error) };
+    } finally {
+      savedDeletionLock.current = false;
+    }
+  };
   const reopenSaved = (snapshot: SavedSearch) => {
     if (!requireVessel()) return;
     if (
@@ -852,60 +1285,119 @@ function AnchorApp() {
       setMessage('This saved stay has ended. Review the proposed new dates before searching.');
       return;
     }
+    setMessage('');
     submitSearch(
       prepared.search,
       savedRegion ? { regionName: savedRegion.name, timezone: savedRegion.timezone } : undefined,
       { filters: snapshot.filters, pin: snapshot.selectedPosition },
-    );
-    setMessage(
-      'Reassessed with ' +
-        vessel.name +
-        ' and the current regional data. Update stay dates if they have elapsed.',
+      vessel.name,
     );
   };
+  const startRestoredPlan = (record: PlanRecord, search: SearchRequest) => {
+    const payload = record.payload;
+    const effective = {
+      ...search,
+      ...(payload.plannedRodeM === undefined ? {} : { deployedRodeM: payload.plannedRodeM }),
+    };
+    const candidate: Candidate = {
+      id: `saved-plan-${record.id}`,
+      name: 'Your proposed anchor position',
+      kind: 'generated',
+      position: payload.selectedPosition,
+    };
+    pendingPlanReview.current = null;
+    submitSearch(search, undefined, { pin: payload.selectedPosition }, vessel.name);
+    dispatch({
+      type: 'openPlan',
+      plan: {
+        instance: ++planSequence.current,
+        candidate,
+        allowance: payload.depthAllowancePercent,
+        search: effective,
+        savedDraft: { id: record.id, payload },
+      },
+    });
+  };
+  const openSavedPlan = async (record: PlanRecord) => {
+    if (!requireVessel()) return;
+    const generation = ++planRestoreGeneration.current;
+    try {
+      const fingerprint = await fingerprintVessel(vessel);
+      const latest = await savedPlansRepository.read();
+      if (!mounted.current || generation !== planRestoreGeneration.current) return;
+      if (!latest.records.some((row) => row.id === record.id && row.revision === record.revision))
+        throw new Error('This plan changed or was removed. Retry from Saved.');
+      setCurrentVesselFingerprint(fingerprint);
+      const prepared = prepareSavedPlan(record.payload);
+      if (prepared.needsDateReview) {
+        pendingPlanReview.current = record;
+        dispatch({ type: 'changeTab', tab: 'explore' });
+        dispatch({
+          type: 'beginSearch',
+          draft: prepared.search,
+          area: { confirmed: true },
+          restore: { pin: record.payload.selectedPosition },
+        });
+        setMessage(
+          'This plan’s stay has ended. Review the proposed dates before reassessing the draft.',
+        );
+        return;
+      }
+      startRestoredPlan(record, prepared.search);
+    } catch (error) {
+      if (mounted.current) notifyError(error);
+    }
+  };
+  const deleteSavedPlan = async (id: string): Promise<DeletionOutcome> => {
+    planReadGeneration.current++;
+    const outcome = await savedPlansRepository.remove(id);
+    await refreshSavedPlans();
+    return outcome;
+  };
   const finishSetup = async () => {
-    if (setupSaving) return;
+    if (setupSaveLock.current) return;
+    if (Object.keys(preferenceStatusRef.current).length) {
+      setSetupError(
+        'Wait for preferences to save, or retry unsaved preferences before continuing.',
+      );
+      return;
+    }
+    setupSaveLock.current = true;
     setSetupSaving(true);
     setSetupError('');
     try {
-      const result = await settingsRepository.commit({
-        vessel,
-        searchDefaults: defaults,
-        confirmed: { vessel: true, defaults: true },
-      });
+      const result = await completeSetup(settingsRepository.commit);
       if (result.status === 'failed') throw new Error(result.error);
-      await setLocal('setup-complete-v2', true);
+      startupSetupDecided.current = true;
       setSetupOpen(false);
       setReviewingSetup(false);
       setTourOpen(true);
     } catch (error) {
       setSetupError('Could not save your setup on this device: ' + String(error));
     } finally {
+      setupSaveLock.current = false;
       setSetupSaving(false);
     }
   };
   const showMap = !!activeSearch || mapPreview;
+  const ExploreContainer = !wide && showMap ? ScrollView : View;
+  const ResultsContainer = wide ? ScrollView : View;
+  const MapContainer = wide ? ScrollView : View;
   const searchCaption = activeSearch
     ? stayLabel(activeSearch) + ' · ' + distance(activeSearch.maxDistanceNm, units) + ' radius'
     : mapPreview
       ? 'Saved regional map'
       : 'Set an area and stay window to search.';
   const activeFilterCount =
+    Number(filters.kind !== 'all') +
     Number(filters.fee !== 'all') +
     Number(filters.assessment !== 'recommended') +
     Number(filters.compatibleOnly) +
     Number(getPreferredBeddings(activeSearch ?? defaults).length > 0);
-  if (!ready)
-    return (
-      <View style={s.loading}>
-        <ActivityIndicator color={c.blue} />
-        <Text style={s.secondaryText}>Loading local settings…</Text>
-      </View>
-    );
   return (
     <SafeAreaView style={s.app}>
       <StatusBar style="dark" />
-      <View style={[s.header, !wide && { paddingHorizontal: 16, height: 60 }]}>
+      <View style={[s.header, !wide && { paddingHorizontal: 16 }]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Anchor Buddy Explore"
@@ -948,11 +1440,42 @@ function AnchorApp() {
             size={17}
             color={watchProblem ? c.red : c.blue}
           />
-          <Text style={{ fontSize: 12, fontWeight: '600', color: watchProblem ? c.red : c.ink }}>
+          <Text
+            style={{
+              flexShrink: 1,
+              fontSize: 12,
+              fontWeight: '600',
+              color: watchProblem ? c.red : c.ink,
+            }}
+          >
             {watchLabel}
           </Text>
         </Pressable>
       </View>
+      {Object.keys(startupIssues).length ? (
+        <ScrollView
+          style={{ maxHeight: 160 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8, gap: 6 }}
+        >
+          <Notice tone="warning">
+            Some local data needs attention. Original records are retained. Watch status remains
+            available.
+          </Notice>
+          {(Object.keys(startupIssues) as StartupCategory[]).map((category) => (
+            <View
+              key={category}
+              style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
+            >
+              <Text style={{ flex: 1, minWidth: 160, color: c.ink }}>
+                {category}: {startupIssues[category]?.message}
+              </Text>
+              <Button secondary small onPress={() => retryStartup(category)}>
+                Retry {category}
+              </Button>
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
       {flow !== 'base' ? (
         <View style={s.flowBar}>
           <Pressable
@@ -985,6 +1508,73 @@ function AnchorApp() {
             offline={offline}
             units={units}
             layers={layers}
+            evidenceLoading={dataLoading}
+            savedPlanName={plan.savedDraft?.payload.name}
+            materialNotice={
+              plan.savedDraft
+                ? [
+                    ...(currentVesselFingerprint
+                      ? planMaterialChanges(
+                          plan.savedDraft.payload,
+                          vessel.id,
+                          currentVesselFingerprint,
+                          planSources(pack),
+                        )
+                      : ['Checking the current vessel compatibility.']),
+                    ...(!dataLoading && dataError ? [dataError] : []),
+                    'Draft inputs are reassessed with the current vessel and available evidence. Arrival checks and watch state are not restored.',
+                  ].join(' ')
+                : undefined
+            }
+            onSaveDraft={async (draft) => {
+              planReadGeneration.current++;
+              const sourceVessel = vessel;
+              const sourcePack = pack;
+              const fingerprint = await fingerprintVessel(sourceVessel);
+              const now = new Date().toISOString();
+              if (!planCandidateIds.current.has(plan.instance))
+                planCandidateIds.current.set(
+                  plan.instance,
+                  `plan-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                );
+              const payload: SavedPlanPayload = {
+                ...draft,
+                createdAt: plan.savedDraft?.payload.createdAt ?? now,
+                updatedAt: now,
+                depthAllowancePercent: plan.allowance,
+                vesselId: sourceVessel.id,
+                vesselFingerprint: fingerprint,
+                sourcePacks: planSources(sourcePack),
+              };
+              const result = await savedPlansRepository.save(
+                payload,
+                plan.savedDraft?.id,
+                () => {
+                  if (
+                    planInputs.current.vessel !== sourceVessel ||
+                    planInputs.current.pack !== sourcePack
+                  )
+                    throw new Error(
+                      'Vessel or evidence changed while saving. Review the plan and retry.',
+                    );
+                },
+                planCandidateIds.current.get(plan.instance),
+              );
+              if (result.status === 'failed') {
+                await refreshSavedPlans();
+                throw new Error(result.message);
+              }
+              if (mounted.current) {
+                setSavedPlans(result.records);
+                setSavedPlansIssue(undefined);
+                dispatch({
+                  type: 'markPlanSaved',
+                  instance: plan.instance,
+                  id: result.record.id,
+                  payload: result.record.payload,
+                });
+              }
+            }}
             onDetails={(assessment, request) => {
               dispatch({
                 type: 'openDetails',
@@ -1012,6 +1602,11 @@ function AnchorApp() {
       ) : null}
       {flow === 'watch' ? (
         <WatchScreen position={watchSetup?.position} radius={watchSetup?.radius} units={units} />
+      ) : startupLoadingSettings ? (
+        <View style={s.loading}>
+          <ActivityIndicator color={c.blue} />
+          <Text style={s.secondaryText}>Loading local settings…</Text>
+        </View>
       ) : flow === 'plan' && plan && activeSearch ? null : tab === 'settings' ? (
         <SettingsScreen
           pack={pack}
@@ -1023,6 +1618,11 @@ function AnchorApp() {
           savedAt={savedAt}
           onSave={savePack}
           onPack={changePack}
+          canReplaceRegion={() =>
+            !startupBlocked.current.region &&
+            !startupBlocked.current['evidence-cleanup'] &&
+            pendingEvidenceRef.current.length === 0
+          }
           onDownloadMap={downloadCurrentArea}
           onViewData={() => setDataOpen(true)}
           vessel={vessel}
@@ -1044,19 +1644,30 @@ function AnchorApp() {
       ) : tab === 'saved' ? (
         <SavedScreen
           searches={saved}
+          plans={savedPlans}
+          planIssue={savedPlansIssue}
+          onRetryPlans={() => void refreshSavedPlans()}
+          onOpenPlan={(record) => void openSavedPlan(record)}
+          onDeletePlan={deleteSavedPlan}
           pack={pack}
           savedAt={savedAt}
           units={units}
           onOpen={reopenSaved}
           mapAreas={mapAreas}
           dataRegions={regionCache}
+          pendingEvidence={pendingEvidence}
+          onSetRetention={setEvidenceRetention}
           onDownloadMap={downloadCurrentArea}
           onOpenMap={openCachedMap}
           onResumeMap={(area) => setDownloadSelection({ ...areaSelection(area), resume: area })}
           onRefreshMap={(area) =>
             setDownloadSelection({ ...areaSelection(area), areaSelected: true })
           }
-          onDeleteMap={(id) => void deleteMapArea(id).then(refreshMapAreas).catch(notifyError)}
+          onDeleteMap={async (id) => {
+            const result = await deleteMapArea(id);
+            refreshMapAreas();
+            return result;
+          }}
           onOpenRegion={openCachedRegion}
           onDeleteRegion={removeCachedRegion}
           onDelete={deleteSaved}
@@ -1084,7 +1695,10 @@ function AnchorApp() {
           }}
         />
       ) : (
-        <View style={s.explore}>
+        <ExploreContainer
+          style={s.explore}
+          {...(!wide && showMap ? { contentContainerStyle: { flexGrow: 1 } } : {})}
+        >
           <View
             style={[
               s.searchHeader,
@@ -1111,6 +1725,7 @@ function AnchorApp() {
                         pack.name + ' · ' + new Date(activeSearch.arrival).toLocaleDateString(),
                       );
                       setSaveError('');
+                      setReplaceSavedId(undefined);
                       setSaveOpen(true);
                     }}
                     style={s.iconButton}
@@ -1147,78 +1762,106 @@ function AnchorApp() {
               {searchCaption}
             </Text>
           ) : null}
-          <View style={[s.filterBar, !wide && { paddingHorizontal: 16 }]}>
-            <View style={s.filterLabelRow}>
-              <Text style={s.sectionLabel}>Quick filters</Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setAdvancedOpen(true)}
-                style={s.advancedButton}
-              >
-                <Icon name="sliders" color={c.blue} size={15} />
-                <Text style={s.linkText}>
-                  Advanced filters & sorting
-                  {activeFilterCount ? ' (' + activeFilterCount + ')' : ''}
-                </Text>
-              </Pressable>
-            </View>
-            <View style={s.filterControls}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ flex: 1, minWidth: 0 }}
-                contentContainerStyle={{ gap: 6, paddingRight: 8 }}
-              >
-                {kinds.map((k) => (
-                  <Pressable
-                    accessibilityRole="button"
-                    aria-pressed={filters.kind === k.id}
-                    key={k.id}
-                    onPress={() => setFilters({ ...filters, kind: k.id })}
-                    style={[s.quickTab, filters.kind === k.id && s.quickSelected]}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        fontWeight: '600',
-                        color: filters.kind === k.id ? c.white : c.ink,
-                      }}
-                    >
-                      {k.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-              <View style={s.viewSwitch}>
-                {(['map', 'list'] as const).map((mode) => (
-                  <Pressable
-                    key={mode}
-                    accessibilityRole="button"
-                    accessibilityLabel={mode === 'map' ? 'Map view' : 'List view'}
-                    aria-pressed={view === mode}
-                    disabled={mode === 'list' && !activeSearch}
-                    onPress={() => dispatch({ type: 'changeView', view: mode })}
-                    style={[
-                      s.viewButton,
-                      view === mode && s.viewSelected,
-                      mode === 'list' && !activeSearch && { opacity: 0.4 },
-                    ]}
-                  >
-                    <Icon
-                      name={mode === 'map' ? 'map' : 'list'}
-                      size={16}
-                      color={view === mode ? c.blue : c.muted}
-                    />
-                    {wide ? (
-                      <Text style={{ fontSize: 12, color: view === mode ? c.blue : c.muted }}>
-                        {mode === 'map' ? 'Map' : 'List'}
-                      </Text>
-                    ) : null}
-                  </Pressable>
-                ))}
+          {activeSearch ? (
+            <View style={[s.filterBar, !wide && { paddingHorizontal: 16 }]}>
+              <View style={s.filterLabelRow}>
+                <Text style={s.sectionLabel}>Quick filters</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setAdvancedOpen(true)}
+                  style={s.advancedButton}
+                >
+                  <Icon name="sliders" color={c.blue} size={15} />
+                  <Text style={s.linkText}>
+                    Advanced filters & sorting
+                    {activeFilterCount ? ' (' + activeFilterCount + ')' : ''}
+                  </Text>
+                </Pressable>
               </View>
+              <View style={s.filterControls}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ flex: 1, minWidth: 0 }}
+                  contentContainerStyle={{ gap: 6, paddingRight: 8 }}
+                >
+                  {kinds.map((k) => (
+                    <Pressable
+                      accessibilityRole="button"
+                      aria-pressed={filters.kind === k.id}
+                      key={k.id}
+                      onPress={() => setFilters({ ...filters, kind: k.id })}
+                      style={[s.quickTab, filters.kind === k.id && s.quickSelected]}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: '600',
+                          color: filters.kind === k.id ? c.white : c.ink,
+                        }}
+                      >
+                        {k.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+                <View style={s.viewSwitch}>
+                  {(['map', 'list'] as const).map((mode) => (
+                    <Pressable
+                      key={mode}
+                      accessibilityRole="button"
+                      accessibilityLabel={mode === 'map' ? 'Map view' : 'List view'}
+                      aria-pressed={view === mode}
+                      disabled={mode === 'list' && !activeSearch}
+                      onPress={() => dispatch({ type: 'changeView', view: mode })}
+                      style={[
+                        s.viewButton,
+                        view === mode && s.viewSelected,
+                        mode === 'list' && !activeSearch && { opacity: 0.4 },
+                      ]}
+                    >
+                      <Icon
+                        name={mode === 'map' ? 'map' : 'list'}
+                        size={16}
+                        color={view === mode ? c.blue : c.muted}
+                      />
+                      {wide ? (
+                        <Text style={{ fontSize: 12, color: view === mode ? c.blue : c.muted }}>
+                          {mode === 'map' ? 'Map' : 'List'}
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+              <Text style={s.secondaryText}>
+                Result filters: {kinds.find((kind) => kind.id === filters.kind)?.label};{' '}
+                {filters.fee === 'all'
+                  ? 'any price'
+                  : filters.fee === 'unknown'
+                    ? 'fee unknown'
+                    : filters.fee}
+                ;{' '}
+                {filters.assessment === 'all'
+                  ? 'including exclusions'
+                  : filters.assessment === 'complete'
+                    ? 'checks pass only'
+                    : 'excluded positions hidden'}
+                {filters.compatibleOnly ? '; vessel compatibility required' : ''}. Sort:{' '}
+                {sortLabels[filters.sort]}.
+              </Text>
+              <Text style={s.secondaryText}>
+                Search seabed preference:{' '}
+                {getPreferredBeddings(activeSearch).length
+                  ? getPreferredBeddings(activeSearch).join(', ')
+                  : 'all seabeds / no preference'}
+                .
+              </Text>
+              <Button secondary small onPress={() => setFilters({ ...DEFAULT_FILTERS })}>
+                Reset result filters
+              </Button>
             </View>
-          </View>
+          ) : null}
           {activeSearch || mapPreview ? (
             <View
               style={{
@@ -1255,10 +1898,10 @@ function AnchorApp() {
                   )}
                   <Text style={s.linkText}>
                     {dataLoading
-                      ? 'Loading live sources…'
-                      : offline
-                        ? 'Downloaded data · view coverage'
-                        : 'Sources & coverage'}
+                      ? reassessingVessel
+                        ? `Reassessing with ${reassessingVessel}…`
+                        : 'Loading live sources…'
+                      : 'Sources & coverage'}
                   </Text>
                 </Pressable>
                 {dataLoading ? (
@@ -1275,14 +1918,28 @@ function AnchorApp() {
                   >
                     Cancel
                   </Button>
-                ) : null}
+                ) : (
+                  <Button
+                    small
+                    secondary
+                    disabled={evidenceState.retryDisabled}
+                    onPress={retryEvidence}
+                  >
+                    Refresh sources
+                  </Button>
+                )}
               </View>
-              {offline ? (
-                <Text accessibilityLiveRegion="polite" style={s.secondaryText}>
-                  {offlinePreference
-                    ? 'Offline planning is enabled in Settings.'
-                    : 'No network connection. Using downloaded maps and dated evidence.'}
+              <Text accessibilityLiveRegion="polite" style={s.secondaryText}>
+                {evidenceState.connection} · {evidenceState.freshness}
+              </Text>
+              {pack.sources.length ? (
+                <Text style={s.secondaryText}>
+                  Source refresh due {localTime(pack.validUntil)}
+                  {savedAt ? ` · Cached ${localTime(savedAt)}` : ''}
                 </Text>
+              ) : null}
+              {evidenceState.retryHelp ? (
+                <Text style={s.secondaryText}>{evidenceState.retryHelp}</Text>
               ) : null}
               {dataError ? (
                 <Text accessibilityLiveRegion="polite" style={s.secondaryText}>
@@ -1303,7 +1960,7 @@ function AnchorApp() {
             </View>
           ) : null}
           {!showMap ? (
-            <View style={s.empty}>
+            <ScrollView contentContainerStyle={[s.empty, { flexGrow: 1 }]}>
               <View style={s.emptyIcon}>
                 <Icon name="search" size={28} color={c.blue} />
               </View>
@@ -1325,17 +1982,23 @@ function AnchorApp() {
               >
                 <Text style={s.linkText}>Open saved searches</Text>
               </Pressable>
-            </View>
+            </ScrollView>
           ) : (
             <View
               style={{
-                flex: 1,
+                flex: wide ? 1 : undefined,
                 minHeight: 0,
                 flexDirection: wide && view === 'map' ? 'row' : 'column',
               }}
             >
               {activeSearch && (view === 'list' || wide) ? (
-                <View style={view === 'map' ? s.resultsSidebar : { flex: 1, minHeight: 0 }}>
+                <View
+                  style={
+                    wide && view === 'map'
+                      ? s.resultsSidebar
+                      : { flex: wide ? 1 : undefined, minHeight: 0 }
+                  }
+                >
                   <View style={s.resultSummary}>
                     <Text style={s.sectionLabel}>{assessments.length} results</Text>
                     <Text style={s.secondaryText}>
@@ -1345,7 +2008,11 @@ function AnchorApp() {
                       · suitability first
                     </Text>
                   </View>
-                  <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+                  <ResultsContainer
+                    {...(wide
+                      ? { contentContainerStyle: { padding: 16, gap: 12 } }
+                      : { style: { padding: 16, gap: 12 } })}
+                  >
                     {result?.depthFallbackPercent ? (
                       <Notice>
                         +{result.depthFallbackPercent}% depth alternatives. All other constraints
@@ -1358,25 +2025,42 @@ function AnchorApp() {
                       </Text>
                     ) : null}
                     {assessments.length ? (
-                      assessments.map((a, i) => (
+                      displayResults.results.map((entry) => (
                         <ResultCard
-                          key={a.id}
-                          assessment={a}
-                          selected={a.id === selectedId}
-                          onSelect={() => select(a)}
+                          key={entry.assessment.id}
+                          result={entry}
+                          onSelect={() => select(entry.assessment)}
                           units={units}
-                          index={i}
                         />
                       ))
                     ) : (
                       <Card>
                         <Text style={s.sectionLabel}>
-                          {dataLoading ? 'Loading places and weather…' : 'No matching results'}
+                          {dataLoading
+                            ? 'Loading places and weather…'
+                            : dataError ||
+                                regionData?.providers.some(
+                                  (provider) =>
+                                    provider.id === 'osm-overpass' &&
+                                    provider.status === 'unavailable',
+                                )
+                              ? 'Source retrieval needs attention'
+                              : resultsWithoutDisplayFilters > 0
+                                ? 'Result filters hide available positions'
+                                : !pack.places.length
+                                  ? 'No source places returned'
+                                  : 'No positions match this search'}
                         </Text>
                         <Text style={s.secondaryText}>
                           {dataLoading
                             ? 'Available source records will appear here. You can keep using the map while they load.'
-                            : 'Try another area or review the filters. Missing evidence cannot establish a suitable position.'}
+                            : dataError
+                              ? 'Available evidence keeps its original dates. Review the source error and retry when connected.'
+                              : resultsWithoutDisplayFilters > 0
+                                ? 'Reset result filters or review them. Your search dates, seabed preferences and operating limits stay unchanged.'
+                                : !pack.places.length
+                                  ? 'No place records or verified generated positions are available. Try another area or inspect source coverage. Missing evidence cannot establish suitability.'
+                                  : 'Review the area and search preferences. Missing evidence cannot establish a suitable position.'}
                         </Text>
                         <Button secondary onPress={openSearch}>
                           Edit search
@@ -1384,31 +2068,26 @@ function AnchorApp() {
                         <Button secondary onPress={() => setAdvancedOpen(true)}>
                           Review filters
                         </Button>
+                        {resultsWithoutDisplayFilters > 0 ? (
+                          <Button secondary onPress={() => setFilters({ ...DEFAULT_FILTERS })}>
+                            Reset result filters
+                          </Button>
+                        ) : null}
+                        {!dataLoading ? (
+                          <Button secondary onPress={() => setDataOpen(true)}>
+                            Review sources & retry
+                          </Button>
+                        ) : null}
                       </Card>
                     )}
-                  </ScrollView>
+                  </ResultsContainer>
                 </View>
               ) : null}
               {view === 'map' || !activeSearch ? (
-                <View style={{ flex: 1, minHeight: 260 }}>
-                  <Chart
-                    pack={pack}
-                    assessments={mapAssessments}
-                    selectedId={selectedId}
-                    origin={activeSearch?.origin ?? previewArea?.center ?? defaults.origin}
-                    onSelect={(id) => {
-                      const found = mapAssessments.find((a) => a.id === id);
-                      if (found) select(found);
-                    }}
-                    onPin={dropPin}
-                    selectOnTap={choosingPin}
-                    units={units}
-                    onlineBasemap={!offline}
-                    showDepth={layers.depth}
-                    showBedding={layers.bedding}
-                    showMarks={layers.marks}
-                    searchRadiusNm={activeSearch?.maxDistanceNm ?? previewArea?.radiusNm}
-                  />
+                <MapContainer
+                  style={{ flex: wide ? 1 : undefined, minHeight: 0 }}
+                  {...(wide ? { contentContainerStyle: { flexGrow: 1 } } : {})}
+                >
                   <View style={s.mapTop}>
                     <Pressable
                       accessibilityRole="button"
@@ -1451,16 +2130,39 @@ function AnchorApp() {
                       >
                         <Text style={s.secondaryText}>
                           {assessments.length} results
-                          {mapAssessments.length > 50
-                            ? ` · first ${customPin ? 49 : 50} on map`
-                            : ''}
                           {offline ? ' · Offline' : ''}
                         </Text>
                       </Pressable>
                     ) : null}
                   </View>
+                  <View style={wide ? { flex: 1, minHeight: 320 } : { height: 440 }}>
+                    <Chart
+                      pack={pack}
+                      results={displayResults}
+                      onShowList={
+                        activeSearch
+                          ? () => dispatch({ type: 'changeView', view: 'list' })
+                          : undefined
+                      }
+                      origin={activeSearch?.origin ?? previewArea?.center ?? defaults.origin}
+                      onSelect={(id) => {
+                        const found = displayResults.markers.find(
+                          (entry) => entry.assessment.id === id,
+                        )?.assessment;
+                        if (found) select(found);
+                      }}
+                      onPin={dropPin}
+                      selectOnTap={choosingPin}
+                      units={units}
+                      onlineBasemap={!offline}
+                      showDepth={layers.depth}
+                      showBedding={layers.bedding}
+                      showMarks={layers.marks}
+                      searchRadiusNm={activeSearch?.maxDistanceNm ?? previewArea?.radiusNm}
+                    />
+                  </View>
                   {choosingPin ? (
-                    <View pointerEvents="none" style={[s.selectedCard, { bottom: 18 }]}>
+                    <View pointerEvents="none" style={s.selectedCard}>
                       <Text style={s.secondaryText}>
                         Tap the map to inspect an anchor position. Its depth, restrictions and swing
                         space still require evidence.
@@ -1475,6 +2177,7 @@ function AnchorApp() {
                     >
                       <View style={{ flex: 1, gap: 5 }}>
                         <Text style={s.sectionLabel}>{selected.candidate.name}</Text>
+                        <StatusBadge assessment={selected} />
                         <Text style={s.secondaryText}>
                           {depth(selected.maxDepthM, units)} depth ·{' '}
                           {distance(selected.distanceNm, units)} straight-line
@@ -1483,12 +2186,25 @@ function AnchorApp() {
                       <Icon name="chevron-right" color={c.blue} />
                     </Pressable>
                   ) : null}
-                </View>
+                </MapContainer>
               ) : null}
             </View>
           )}
-        </View>
+        </ExploreContainer>
       )}
+      {message ? (
+        <View style={s.toast}>
+          <Text
+            accessibilityLiveRegion="polite"
+            style={{ flex: 1, minWidth: 0, color: 'white', fontSize: 13, lineHeight: 20 }}
+          >
+            {message}
+          </Text>
+          <Button small secondary onPress={() => setMessage('')}>
+            Dismiss message
+          </Button>
+        </View>
+      ) : null}
       {!wide ? (
         <View style={s.bottomNav}>
           {tabs.map((t) => (
@@ -1517,18 +2233,8 @@ function AnchorApp() {
           ))}
         </View>
       ) : null}
-      {message ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss message"
-          onPress={() => setMessage('')}
-          style={s.toast}
-        >
-          <Text style={{ flex: 1, color: 'white', fontSize: 12, lineHeight: 19 }}>{message}</Text>
-          <Icon name="x" color="white" size={16} />
-        </Pressable>
-      ) : null}
       {setupOpen &&
+      flow !== 'watch' &&
       watchStatus &&
       !watchActive &&
       !watchProblem &&
@@ -1541,6 +2247,19 @@ function AnchorApp() {
           onEditDefaults={() => setDefaultsOpen(true)}
           vesselConfigured={vesselConfigured}
           defaultsConfigured={defaultsConfigured}
+          vesselSummary={
+            vesselConfigured
+              ? `${vessel.name} · ${depth(vessel.lengthM, units)} length · ${depth(vessel.loadedDraftM, units)} draft`
+              : undefined
+          }
+          defaultsSummary={
+            defaultsConfigured
+              ? `${distance(defaults.maxDistanceNm, units)} search radius · ${depth(defaults.preferredMaxDepthM, units)} preferred maximum depth`
+              : undefined
+          }
+          preferenceStatus={preferenceStatuses.units}
+          otherPreferencesUnsaved={Object.keys(preferenceStatuses).some((key) => key !== 'units')}
+          onRetryUnits={() => preferenceCommands.retry('units')}
           onFinish={finishSetup}
           onClose={
             reviewingSetup
@@ -1585,8 +2304,24 @@ function AnchorApp() {
           offline={offline}
           units={units}
           onFindLocation={findLocations}
-          onSave={submitSearch}
+          onSave={async (search, selection) => {
+            const pending = pendingPlanReview.current;
+            if (pending) {
+              const latest = await savedPlansRepository.read();
+              if (
+                !latest.records.some(
+                  (row) => row.id === pending.id && row.revision === pending.revision,
+                )
+              )
+                throw new Error(
+                  'This plan changed or was removed. Cancel and reopen it from Saved.',
+                );
+              if (!mounted.current || pendingPlanReview.current !== pending) return;
+              startRestoredPlan(pending, search);
+            } else submitSearch(search, selection);
+          }}
           onClose={() => {
+            pendingPlanReview.current = null;
             dispatch({ type: 'cancelSearch' });
           }}
         />
@@ -1644,7 +2379,7 @@ function AnchorApp() {
               timezone,
             );
             if (signal?.aborted) throw new Error('Area data download cancelled.');
-            await saveRegionalData(data);
+            await saveRegionalData(data, 'retained');
           }}
           onClose={() => setDownloadSelection(null)}
         />
@@ -1652,28 +2387,23 @@ function AnchorApp() {
       {dataOpen ? (
         <RegionalDataSheet
           units={units}
+          stay={sourceStay}
           pack={regionData?.pack ?? pack}
           data={regionData}
           error={dataError}
           loading={dataLoading}
           offline={offline}
           selectedArea={!!activeSearch || !!previewArea}
+          connectionSummary={evidenceState.connection}
+          retryDisabled={evidenceState.retryDisabled}
+          retryHelp={evidenceState.retryHelp}
           onRetry={() => {
             if (!activeSearch && !previewArea) {
               setDataOpen(false);
               openSearch();
               return;
             }
-            void loadSearchData(
-              activeSearch ?? {
-                ...freshSearch(defaults),
-                origin: previewArea?.center ?? defaults.origin,
-                maxDistanceNm: previewArea?.radiusNm ?? defaults.maxDistanceNm,
-              },
-              true,
-              activeAreaName,
-              activeAreaTimezone,
-            );
+            retryEvidence();
           }}
           onSettings={() => {
             setDataOpen(false);
@@ -1685,12 +2415,19 @@ function AnchorApp() {
       {currentDetail && isModal('detail') ? (
         <Details
           assessment={currentDetail}
+          stay={assessedSearch ? createForecastStay(assessedSearch) : null}
           pack={pack}
+          evidenceCachedAt={
+            regionData?.pack.id === pack.id && regionData.pack.version === pack.version
+              ? regionData.savedAt
+              : undefined
+          }
           units={units}
           onClose={() => closeDetails()}
           onSources={() => {
+            const stay = assessedSearch ? createForecastStay(assessedSearch) : null;
             closeDetails();
-            setDataOpen(true);
+            setDataOpen(true, stay);
           }}
           onPlan={() => {
             dispatch({
@@ -1699,7 +2436,7 @@ function AnchorApp() {
                 instance: ++planSequence.current,
                 candidate: currentDetail.candidate,
                 allowance: currentDetail.depthAllowancePercent,
-                search: detailSearch ?? activeSearch!,
+                search: assessedSearch!,
               },
             });
           }}
@@ -1723,13 +2460,69 @@ function AnchorApp() {
           <Text style={s.secondaryText}>
             {assessments.length} results · {vessel.name}
           </Text>
+          {saved.length >= SAVED_SEARCH_LIMIT ? (
+            <View style={{ gap: 10 }}>
+              <Notice tone="warning">
+                {saved.length > SAVED_SEARCH_LIMIT
+                  ? 'This library has more than 30 searches. Delete existing searches until 30 or fewer remain before saving.'
+                  : 'The library holds 30 saved searches. Choose exactly one to replace, or cancel and delete one in Saved.'}
+              </Notice>
+              {saved.length === SAVED_SEARCH_LIMIT
+                ? saved.map((item) => (
+                    <Pressable
+                      key={item.id}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: replaceSavedId === item.id }}
+                      onPress={() => setReplaceSavedId(item.id)}
+                      style={{
+                        padding: 12,
+                        borderWidth: 1,
+                        borderColor: replaceSavedId === item.id ? c.blue : c.line,
+                        borderRadius: 8,
+                        gap: 4,
+                      }}
+                    >
+                      <Text style={{ color: c.ink, fontWeight: '600' }}>
+                        {replaceSavedId === item.id ? 'Selected: ' : ''}
+                        {item.name}
+                      </Text>
+                      <Text style={s.secondaryText}>
+                        Saved {localTime(item.savedAt, 'UTC')}{' '}
+                        {new Date(item.savedAt).getUTCFullYear()} · {item.vesselName}
+                      </Text>
+                    </Pressable>
+                  ))
+                : null}
+              {replaceSavedId ? (
+                <Text style={s.secondaryText}>
+                  The selected snapshot will be permanently replaced after the new snapshot is
+                  saved.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           {saveError ? <Notice tone="warning">{saveError}</Notice> : null}
-          <Button icon="bookmark" disabled={saving} onPress={() => void saveResults()}>
-            {saving ? 'Saving…' : 'Save results'}
+          <Button
+            icon="bookmark"
+            disabled={
+              saving ||
+              saved.length > SAVED_SEARCH_LIMIT ||
+              (saved.length === SAVED_SEARCH_LIMIT && !replaceSavedId)
+            }
+            onPress={() => void saveResults()}
+          >
+            {saving
+              ? 'Saving…'
+              : replaceSavedId && saved.length === SAVED_SEARCH_LIMIT
+                ? 'Replace selected & save'
+                : 'Save results'}
+          </Button>
+          <Button secondary disabled={saving} onPress={() => setSaveOpen(false)}>
+            Cancel
           </Button>
         </Sheet>
       ) : null}
-      {tourOpen && !setupOpen ? (
+      {tourOpen && !setupOpen && flow !== 'watch' && !watchActive && !watchProblem ? (
         <AppTour
           onClose={() => setTourOpen(false)}
           onSearch={() => {
@@ -1760,17 +2553,19 @@ const s = StyleSheet.create({
     backgroundColor: c.paper,
   },
   header: {
-    height: 72,
+    minHeight: 72,
+    paddingVertical: 8,
     paddingHorizontal: 24,
     backgroundColor: c.white,
     borderBottomWidth: 1,
     borderColor: c.line,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 16,
   },
-  brand: { flexDirection: 'row', gap: 9, alignItems: 'center' },
+  brand: { flexDirection: 'row', gap: 9, alignItems: 'center', minHeight: 44, flexShrink: 1 },
   brandText: { fontSize: 20, fontWeight: '700', letterSpacing: -0.5, color: c.ink },
   nav: { flexDirection: 'row', gap: 8 },
   navItem: {
@@ -1783,6 +2578,9 @@ const s = StyleSheet.create({
   navSelected: { backgroundColor: c.mint },
   navText: { fontSize: 13, fontWeight: '600', color: c.muted },
   watchButton: {
+    minHeight: 44,
+    maxWidth: '100%',
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
@@ -1876,10 +2674,7 @@ const s = StyleSheet.create({
   },
   resultSummary: { padding: 16, gap: 4, borderBottomWidth: 1, borderColor: c.line },
   mapTop: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    right: 55,
+    padding: 12,
     flexDirection: 'row',
     gap: 8,
     alignItems: 'center',
@@ -1898,10 +2693,7 @@ const s = StyleSheet.create({
   },
   mapCount: { backgroundColor: c.white, padding: 10, borderRadius: 8 },
   selectedCard: {
-    position: 'absolute',
-    bottom: 30,
-    left: 16,
-    right: 16,
+    margin: 12,
     maxWidth: 420,
     padding: 16,
     borderRadius: 12,
@@ -1919,11 +2711,19 @@ const s = StyleSheet.create({
     borderColor: c.line,
     paddingVertical: 6,
   },
-  bottomTab: { flex: 1, alignItems: 'center', gap: 5, paddingVertical: 8 },
+  bottomTab: {
+    flex: 1,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 8,
+  },
   flowBar: {
     paddingHorizontal: 20,
     paddingVertical: 12,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
@@ -1933,17 +2733,15 @@ const s = StyleSheet.create({
   },
   back: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   toast: {
-    position: 'absolute',
-    bottom: 80,
-    left: 16,
-    right: 16,
-    alignSelf: 'center',
-    maxWidth: 620,
+    marginHorizontal: 16,
+    marginVertical: 8,
+    flexShrink: 0,
     backgroundColor: c.ink,
     padding: 16,
     borderRadius: 10,
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 12,
-    zIndex: 100,
   },
 });

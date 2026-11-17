@@ -1,14 +1,17 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Linking, Pressable, Text, View } from 'react-native';
 import type { RegionPack, UnitSystem } from '@anchor-buddy/domain';
 import Sheet from './Sheet';
+import { ForecastIntervalRow, ForecastOverview } from './ForecastOverview';
 import { Button, Notice } from './ui';
 import { colors as c } from '../theme';
-import { localTime, wind, depth, direction } from '../lib/units';
+import { localTime, depth } from '../lib/units';
+import { describeForecast, forecastTimezone, type ForecastStay } from '../lib/forecastPresentation';
 import type { RegionalData } from '../lib/regionalDataCore';
 
 export default function RegionalDataSheet({
   pack,
+  stay,
   data,
   error,
   loading,
@@ -18,8 +21,12 @@ export default function RegionalDataSheet({
   units,
   offline = false,
   selectedArea = true,
+  retryDisabled = false,
+  retryHelp,
+  connectionSummary,
 }: {
   pack: RegionPack;
+  stay?: ForecastStay | null;
   data: RegionalData | null;
   error: string;
   loading: boolean;
@@ -29,30 +36,34 @@ export default function RegionalDataSheet({
   units: UnitSystem;
   offline?: boolean;
   selectedArea?: boolean;
+  retryDisabled?: boolean;
+  retryHelp?: string;
+  connectionSummary?: string;
 }) {
   const [showAllForecast, setShowAllForecast] = useState(false);
-  const forecast = useMemo(
-    () => [...pack.weather].sort((a, b) => Date.parse(a.validFrom) - Date.parse(b.validFrom)),
-    [pack.weather],
-  );
-  const visibleForecast = showAllForecast ? forecast : forecast.slice(0, 24);
+  const timezone = stay?.timezone ?? forecastTimezone();
+  const now = Date.now();
+  const forecast = describeForecast(pack.weather, pack, stay, now);
+  const visibleForecast = showAllForecast ? forecast.rows : forecast.rows.slice(0, 24);
+  const forecastSourceIds = new Set(pack.weather.flatMap((interval) => interval.sourceIds));
+  const sources = new Map(pack.sources.map((source) => [source.id, source]));
   return (
     <Sheet title="Area data & coverage" subtitle={pack.name} onClose={onClose}>
       {error ? <Notice tone="warning">{error}</Notice> : null}
+      {connectionSummary ? (
+        <Text style={{ color: c.neutral, fontSize: 12, lineHeight: 19 }}>{connectionSummary}</Text>
+      ) : null}
       <Notice>{pack.validation.notice}</Notice>
       {pack.sources.length ? (
         <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19 }}>
-          Snapshot refresh due {localTime(pack.validUntil)}
-          {Date.parse(pack.validUntil) <= Date.now() ? ' · Expired — refresh required' : ''}
+          Snapshot refresh due {localTime(pack.validUntil, timezone)}
+          {Date.parse(pack.validUntil) <= now ? ' · Expired — refresh required' : ''}
         </Text>
       ) : (
         <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19 }}>
           No regional evidence snapshot is loaded.
         </Text>
       )}
-      <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19 }}>
-        All dates and times below use your device’s local time zone.
-      </Text>
       <Text style={{ color: c.ink, fontSize: 13, lineHeight: 20 }}>
         {pack.places.length} place records · {pack.depths.length} depth areas ·{' '}
         {pack.weather.length} forecast intervals. Prices, overnight permission, seabed and berth
@@ -117,8 +128,8 @@ export default function RegionalDataSheet({
                 {source.attribution} · {source.license}
               </Text>
               <Text style={{ color: c.muted, fontSize: 11, lineHeight: 17 }}>
-                Retrieved {localTime(source.retrievedAt)} · refresh due{' '}
-                {localTime(source.validUntil)}. Retrieval is not the survey date.
+                Retrieved {localTime(source.retrievedAt, timezone)} · refresh due{' '}
+                {localTime(source.validUntil, timezone)}. Retrieval is not the survey date.
               </Text>
             </View>
           ))}
@@ -135,13 +146,13 @@ export default function RegionalDataSheet({
           <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19 }}>{provider.message}</Text>
           {provider.retrievedAt ? (
             <Text style={{ color: c.muted, fontSize: 11 }}>
-              Retrieved {localTime(provider.retrievedAt)}
+              Retrieved {localTime(provider.retrievedAt, timezone)}
             </Text>
           ) : null}
           {provider.validUntil ? (
             <Text style={{ color: c.muted, fontSize: 11, lineHeight: 17 }}>
-              Refresh due {localTime(provider.validUntil)}
-              {Date.parse(provider.validUntil) <= Date.now() ? ' · Expired' : ''}
+              Refresh due {localTime(provider.validUntil, timezone)}
+              {Date.parse(provider.validUntil) <= now ? ' · Expired' : ''}
             </Text>
           ) : null}
           {provider.license ? (
@@ -161,27 +172,20 @@ export default function RegionalDataSheet({
       ))}
       <View style={{ gap: 10 }}>
         <Text style={{ color: c.ink, fontSize: 15, fontWeight: '600' }}>Available forecast</Text>
-        {forecast.length ? (
+        <ForecastOverview forecast={forecast} scope="area" timezone={timezone} units={units} />
+        {forecast.rows.length ? (
           <>
             <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19 }}>
-              Showing {visibleForecast.length} of {forecast.length} forecast intervals.
+              Showing {visibleForecast.length} of {forecast.rows.length} forecast intervals.
             </Text>
-            {visibleForecast.map((interval, index) => (
-              <View key={index} style={{ gap: 4, paddingVertical: 6 }}>
-                <Text style={{ color: c.ink, fontSize: 12 }}>
-                  {localTime(interval.validFrom)} – {localTime(interval.validUntil)}
-                </Text>
-                <Text style={{ color: c.muted, fontSize: 12 }}>
-                  Wind {wind(interval.windKnots, units)} {direction(interval.windDirectionDeg)} ·
-                  gusts {wind(interval.gustKnots, units)} · waves {depth(interval.waveM, units)}
-                </Text>
-              </View>
+            {visibleForecast.map((row, index) => (
+              <ForecastIntervalRow key={index} row={row} timezone={timezone} units={units} />
             ))}
-            {forecast.length > 24 ? (
+            {forecast.rows.length > 24 ? (
               <Button secondary onPress={() => setShowAllForecast((previous) => !previous)}>
                 {showAllForecast
                   ? 'Show first 24 intervals'
-                  : `Show all ${forecast.length} intervals`}
+                  : `Show all ${forecast.rows.length} intervals`}
               </Button>
             ) : null}
           </>
@@ -191,12 +195,44 @@ export default function RegionalDataSheet({
           </Text>
         )}
       </View>
-      <Button icon="refresh-cw" disabled={loading || (offline && selectedArea)} onPress={onRetry}>
+      {forecastSourceIds.size ? (
+        <View style={{ gap: 8 }}>
+          <Text style={{ color: c.ink, fontSize: 15, fontWeight: '600' }}>
+            Forecast source dates
+          </Text>
+          {[...forecastSourceIds].map((id) => {
+            const source = sources.get(id);
+            return source ? (
+              <View key={id} style={{ gap: 4 }}>
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={() => void Linking.openURL(source.url)}
+                >
+                  <Text style={{ color: c.blue, fontSize: 12 }}>{source.name} ↗</Text>
+                </Pressable>
+                <Text style={{ color: c.neutral, fontSize: 12 }}>
+                  Retrieved {localTime(source.retrievedAt, timezone)} · valid until{' '}
+                  {localTime(source.validUntil, timezone)}
+                </Text>
+              </View>
+            ) : (
+              <Text key={id} style={{ color: c.neutral, fontSize: 12 }}>
+                Forecast source record unavailable · {id}
+              </Text>
+            );
+          })}
+        </View>
+      ) : null}
+      <Button
+        icon="refresh-cw"
+        disabled={loading || (selectedArea && (offline || retryDisabled))}
+        onPress={onRetry}
+      >
         {loading ? 'Loading sources…' : selectedArea ? 'Refresh area data' : 'Choose search area'}
       </Button>
-      {offline ? (
+      {retryHelp || offline ? (
         <Text style={{ color: c.muted, fontSize: 12 }}>
-          Reconnect and disable manual offline planning to refresh sources.
+          {retryHelp ?? 'Reconnect and disable manual offline planning to refresh sources.'}
         </Text>
       ) : null}
       <Button secondary icon="settings" onPress={onSettings}>

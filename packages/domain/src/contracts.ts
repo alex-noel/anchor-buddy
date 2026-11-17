@@ -191,6 +191,8 @@ export interface SettingsPayload {
   layers: { depth: boolean; bedding: boolean; marks: boolean };
   language: 'en';
   confirmed: { vessel: boolean; defaults: boolean };
+  /** Absent only on older settings records; setup migration resolves the legacy marker. */
+  setupComplete?: boolean;
 }
 export interface SavedPlanPayload {
   name: string;

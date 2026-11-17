@@ -1,7 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Crypto from 'expo-crypto';
 import { TransformRequestManager } from '@maplibre/maplibre-react-native';
-import { getLocal, removeLocal, setLocal } from './storage';
+import { getLocal, getLocalRaw, removeLocal, setLocal } from './storage';
 import {
   createWorldMapCache,
   fetchBoundedMapResource,
@@ -36,8 +36,16 @@ const hash = async (bytes: Uint8Array) =>
     .join('');
 const io: MapCacheIO = {
   list: async () => {
-    const value = await getLocal<unknown>(key);
-    return Array.isArray(value) ? (value as MapArea[]) : [];
+    const raw = await getLocalRaw(key);
+    if (raw === null) return [];
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new Error('Map index is corrupt; original retained.');
+    }
+    if (!Array.isArray(value)) throw new Error('Map index is invalid; original retained.');
+    return value as MapArea[];
   },
   readManifest: async (id) => getLocal<MapAreaManifest>('world-map-manifest:' + id),
   saveManifest: async (manifest) => {
@@ -58,6 +66,15 @@ const io: MapCacheIO = {
     const directory = new Directory(areaDirectory(id), ...segments);
     directory.create({ intermediates: true, idempotent: true });
     new File(directory, name).write(bytes);
+  },
+  markForRemoval: async (id) => {
+    const areas = await io.list();
+    if (!areas.some((area) => area.id === id)) return false;
+    await setLocal(
+      key,
+      areas.map((area) => (area.id === id ? { ...area, cleanupPending: true } : area)),
+    );
+    return true;
   },
   remove: async (id) => {
     for (const key of verifiedFiles.keys()) if (key.startsWith(id + '/')) verifiedFiles.delete(key);

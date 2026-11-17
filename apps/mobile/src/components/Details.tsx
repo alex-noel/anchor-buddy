@@ -2,10 +2,12 @@ import React, { useState, type ReactNode } from 'react';
 import { Linking, Pressable, Text, View } from 'react-native';
 import type { Assessment, RegionPack, UnitSystem } from '@anchor-buddy/domain';
 import Sheet from './Sheet';
+import { ForecastIntervalRow, ForecastOverview } from './ForecastOverview';
 import { Button, Card, Eyebrow, Icon, Notice } from './ui';
 import { StatusBadge, kindNames } from './ResultCard';
 import { colors as c, spacing, textScale } from '../theme';
-import { depth, distance, direction, localTime, money, wind } from '../lib/units';
+import { depth, distance, localTime, money } from '../lib/units';
+import { describeForecast, forecastTimezone, type ForecastStay } from '../lib/forecastPresentation';
 
 function Disclosure({
   title,
@@ -52,6 +54,7 @@ function ReasonRows({ reasons }: { reasons: Assessment['reasons'] }) {
 export default function Details({
   assessment: a,
   pack,
+  stay,
   units,
   onClose,
   onPlan,
@@ -60,6 +63,7 @@ export default function Details({
 }: {
   assessment: Assessment;
   pack: RegionPack;
+  stay: ForecastStay | null;
   units: UnitSystem;
   onClose: () => void;
   onPlan: () => void;
@@ -68,6 +72,12 @@ export default function Details({
   evidenceCachedAt?: string | null;
 }) {
   const [allWeather, setAllWeather] = useState(false);
+  const timezone = stay?.timezone ?? forecastTimezone();
+  const forecast = describeForecast(a.weather, pack, stay, Date.now());
+  const forecastWindows = [forecast.requested?.stay, forecast.requested?.contingency];
+  const forecastGaps = forecastWindows.some(
+    (window) => window && (window.intervalGap || window.metricGaps.length),
+  );
   const p = a.candidate.place;
   const anchored = a.candidate.kind === 'anchorage' || a.candidate.kind === 'generated';
   const footprintResolved = a.requiredRodeM !== null && a.swingRadiusM !== null;
@@ -238,8 +248,13 @@ export default function Details({
 
       <Disclosure
         title="Stay & departure weather"
-        summary={`${a.weather.length} forecast interval(s)`}
+        summary={
+          forecastGaps
+            ? 'Forecast gaps in requested windows'
+            : `${a.weather.length} forecast interval(s)`
+        }
       >
+        <ForecastOverview forecast={forecast} scope="position" timezone={timezone} units={units} />
         {!a.weather.length ? (
           <Notice>
             No forecast has verified spatial coverage at this position for this stay. Sources &
@@ -247,16 +262,8 @@ export default function Details({
             or conditions here.
           </Notice>
         ) : null}
-        {(allWeather ? a.weather : a.weather.slice(0, 12)).map((w, i) => (
-          <View key={i} style={styles.weatherRow}>
-            <Text style={styles.rowLabel}>{localTime(w.validFrom)}</Text>
-            <Text style={styles.secondaryText}>
-              Wind {wind(w.windKnots, units)} {direction(w.windDirectionDeg)} · gusts{' '}
-              {wind(w.gustKnots, units)} · waves {depth(w.waveM, units)} · current{' '}
-              {wind(w.currentKnots, units, 1)}
-            </Text>
-            {w.warnings.length ? <Notice tone="warning">{w.warnings.join('; ')}</Notice> : null}
-          </View>
+        {(allWeather ? forecast.rows : forecast.rows.slice(0, 12)).map((row, index) => (
+          <ForecastIntervalRow key={index} row={row} timezone={timezone} units={units} />
         ))}
         {a.weather.length > 12 ? (
           <Button secondary onPress={() => setAllWeather(!allWeather)}>
@@ -437,12 +444,6 @@ const styles = {
   secondaryText: { fontSize: textScale.compact, lineHeight: 19, color: c.muted },
   bodyText: { fontSize: textScale.compact, lineHeight: 20, color: c.ink },
   rowLabel: { fontSize: textScale.compact, fontWeight: '600' as const, color: c.ink },
-  weatherRow: {
-    borderBottomWidth: 1,
-    borderBottomColor: c.line,
-    paddingBottom: spacing.md,
-    gap: spacing.sm,
-  },
   costRow: {
     flexDirection: 'row' as const,
     justifyContent: 'space-between' as const,

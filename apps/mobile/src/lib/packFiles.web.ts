@@ -1,5 +1,6 @@
+import { removeUnreferencedAsset } from './regionalPacks';
 import type { RegionPack } from '@anchor-buddy/domain';
-import { getLocal } from './storage';
+import { getLocal, getLocalRaw } from './storage';
 import {
   validSegment,
   validateManifest,
@@ -26,7 +27,13 @@ export async function beginPackStage(sessionId: string) {
       return key;
     },
     async rollback() {
-      await caches.delete(cacheName(key));
+      await removeUnreferencedAsset(
+        key,
+        () => getLocalRaw('active-region'),
+        async () => {
+          await caches.delete(cacheName(key));
+        },
+      );
     },
   };
 }

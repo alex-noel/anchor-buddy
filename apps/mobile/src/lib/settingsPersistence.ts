@@ -10,6 +10,7 @@ import {
 } from '@anchor-buddy/domain';
 
 export const SETTINGS_KEY = 'settings-v2';
+export type MobileSettingsPayload = SettingsPayload & { setupComplete: boolean };
 type Store = {
   getRaw(key: string): Promise<string | null>;
   get<T>(key: string): Promise<T | null>;
@@ -19,7 +20,7 @@ export type SettingsResult =
   | { status: 'committed'; value: LocalRecord<SettingsPayload> }
   | { status: 'failed'; error: string };
 export type SettingsRead =
-  | { status: 'supported'; value: SettingsPayload }
+  | { status: 'supported'; value: MobileSettingsPayload; source: 'record' | 'legacy' | 'absent' }
   | { status: 'invalid' | 'unsupported-version'; error: string };
 
 function validateSettings(value: unknown): string[] {
@@ -42,6 +43,14 @@ function validateSettings(value: unknown): string[] {
     return ['Invalid vessel'];
   if (v.searchDefaults !== null && (!v.searchDefaults || validateSearch(v.searchDefaults).length))
     return ['Invalid defaults'];
+  const completion = (v as SettingsPayload & { setupComplete?: unknown }).setupComplete;
+  if (completion !== undefined && typeof completion !== 'boolean')
+    return ['Invalid setup completion'];
+  if (
+    completion === true &&
+    (!v.confirmed.vessel || !v.confirmed.defaults || !v.vessel || !v.searchDefaults)
+  )
+    return ['Completed setup requires confirmed vessel and defaults'];
   if ((v.confirmed.vessel && !v.vessel) || (v.confirmed.defaults && !v.searchDefaults))
     return ['Confirmed settings are incomplete'];
   return [];
@@ -50,6 +59,33 @@ function validateSettings(value: unknown): string[] {
 /** Serializes read-modify-write commands; legacy sources are retained, never overwritten. */
 export function createSettingsRepository(store: Store) {
   let queue: Promise<unknown> = Promise.resolve();
+  const legacyCompletion = async (): Promise<
+    | { status: 'supported'; value: boolean }
+    | { status: 'invalid' | 'unsupported-version'; error: string }
+  > => {
+    const raw = await store.getRaw('setup-complete-v2');
+    if (raw === null) return { status: 'supported', value: false };
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return { status: 'invalid', error: 'Legacy setup marker is corrupt; original retained.' };
+    }
+    if (
+      value &&
+      typeof value === 'object' &&
+      'schemaVersion' in value &&
+      typeof value.schemaVersion === 'number' &&
+      value.schemaVersion > 2
+    )
+      return {
+        status: 'unsupported-version',
+        error: 'Legacy setup marker has an unsupported version; original retained.',
+      };
+    return typeof value === 'boolean'
+      ? { status: 'supported', value }
+      : { status: 'invalid', error: 'Legacy setup marker is invalid; original retained.' };
+  };
   const read = async (): Promise<SettingsRead> => {
     const raw = await store.getRaw(SETTINGS_KEY);
     if (raw !== null) {
@@ -64,17 +100,91 @@ export function createSettingsRepository(store: Store) {
         return { status: result.status, error: result.errors.join(' ') };
       if (result.value.id !== 'local-settings')
         return { status: 'invalid', error: 'Unexpected settings identity; original retained.' };
-      return { status: 'supported', value: result.value.payload };
+      const payload = result.value.payload as SettingsPayload & { setupComplete?: boolean };
+      if (payload.setupComplete !== undefined)
+        return {
+          status: 'supported',
+          value: { ...payload, setupComplete: payload.setupComplete },
+          source: 'record',
+        };
+      const marker = await legacyCompletion();
+      if (marker.status !== 'supported') return marker;
+      return {
+        status: 'supported',
+        value: {
+          ...payload,
+          setupComplete:
+            marker.value &&
+            payload.confirmed.vessel &&
+            payload.confirmed.defaults &&
+            !!payload.vessel &&
+            !!payload.searchDefaults,
+        },
+        source: 'record',
+      };
     }
-    const [vessel, defaults, legacySearch, prefs, profile] = await Promise.all([
-      store.get<VesselProfile>('vessel'),
-      store.get<SearchRequest>('search-defaults'),
-      store.get<SearchRequest>('search'),
-      store.get<{ units: UnitSystem; offline: boolean; layers?: SettingsPayload['layers'] }>(
-        'preferences',
-      ),
-      store.get<boolean>('profile-confirmed-v3'),
-    ]);
+    const keys = [
+      'vessel',
+      'search-defaults',
+      'search',
+      'preferences',
+      'profile-confirmed-v3',
+    ] as const;
+    const legacyRaw = await Promise.all(keys.map((key) => store.getRaw(key)));
+    const parsed: unknown[] = [];
+    for (let i = 0; i < legacyRaw.length; i++) {
+      if (legacyRaw[i] === null) {
+        parsed.push(null);
+        continue;
+      }
+      try {
+        parsed.push(JSON.parse(legacyRaw[i]!));
+      } catch {
+        return { status: 'invalid', error: `Legacy ${keys[i]} is corrupt; original retained.` };
+      }
+    }
+    for (let i = 0; i < parsed.length; i++) {
+      if (legacyRaw[i] !== null && parsed[i] === null)
+        return { status: 'invalid', error: `Legacy ${keys[i]} is invalid; original retained.` };
+      const item = parsed[i];
+      if (
+        item &&
+        typeof item === 'object' &&
+        'schemaVersion' in item &&
+        typeof item.schemaVersion === 'number' &&
+        item.schemaVersion > 2
+      )
+        return {
+          status: 'unsupported-version',
+          error: `Legacy ${keys[i]} has an unsupported version; original retained.`,
+        };
+    }
+    const [vessel, defaults, legacySearch, prefs, profile] = parsed as [
+      VesselProfile | null,
+      SearchRequest | null,
+      SearchRequest | null,
+      { units: UnitSystem; offline: boolean; layers?: SettingsPayload['layers'] } | null,
+      boolean | null,
+    ];
+    if (
+      (vessel !== null && validateVessel(vessel).length) ||
+      (defaults !== null && validateSearch(defaults).length) ||
+      (legacySearch !== null && validateSearch(legacySearch).length) ||
+      (profile !== null && typeof profile !== 'boolean') ||
+      (prefs !== null &&
+        (!prefs ||
+          typeof prefs !== 'object' ||
+          !['nautical', 'metric', 'imperial'].includes(prefs.units) ||
+          typeof prefs.offline !== 'boolean' ||
+          (prefs.layers !== undefined &&
+            (!prefs.layers ||
+              !['depth', 'bedding', 'marks'].every(
+                (k) => typeof prefs.layers?.[k as keyof SettingsPayload['layers']] === 'boolean',
+              )))))
+    )
+      return { status: 'invalid', error: 'Legacy settings are invalid; original retained.' };
+    const marker = await legacyCompletion();
+    if (marker.status !== 'supported') return marker;
     const boat = vessel && !validateVessel(vessel).length ? vessel : null;
     const search = defaults ?? legacySearch;
     const validSearch = search && !validateSearch(search).length ? search : null;
@@ -87,6 +197,7 @@ export function createSettingsRepository(store: Store) {
         : { depth: true, bedding: true, marks: true };
     return {
       status: 'supported',
+      source: legacyRaw.every((value) => value === null) ? 'absent' : 'legacy',
       value: {
         vessel: boat,
         searchDefaults: validSearch,
@@ -98,6 +209,7 @@ export function createSettingsRepository(store: Store) {
         layers,
         language: 'en',
         confirmed: { vessel: profile === true && !!boat, defaults: !!validSearch },
+        setupComplete: marker.value && profile === true && !!boat && !!validSearch,
       },
     };
   };

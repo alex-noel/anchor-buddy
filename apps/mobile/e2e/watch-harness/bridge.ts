@@ -12,7 +12,16 @@ const fixes: Array<(fix: unknown) => void> = [];
 export const Accuracy = { Highest: 6 };
 export const requestForegroundPermissionsAsync = async () => ({ granted: true, status: 'granted' });
 export const getCurrentPositionAsync = () => new Promise((resolve) => fixes.push(resolve));
-export const getStatus = async () => status;
+let postStopOverride: Partial<WatchStatus> | undefined;
+let postStopRead: Partial<WatchStatus> | undefined;
+export const getStatus = async () => {
+  if (postStopRead) {
+    const next = { ...status, ...postStopRead };
+    postStopRead = undefined;
+    return next;
+  }
+  return status;
+};
 export const subscribe = (fn: (s: WatchStatus) => void) => {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -62,6 +71,8 @@ export const stop = async () => {
     });
   if (rejectStop) throw new Error('Controlled native stop failure');
   emit({ state: 'idle', serviceRunning: false });
+  postStopRead = postStopOverride;
+  postStopOverride = undefined;
   return status;
 };
 export const acknowledge = async () => status;
@@ -96,5 +107,8 @@ function emit(patch: Partial<WatchStatus>) {
   },
   failStop: (value: boolean) => {
     rejectStop = value;
+  },
+  overridePostStopRead: (value: Partial<WatchStatus>) => {
+    postStopOverride = value;
   },
 };

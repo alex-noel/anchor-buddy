@@ -29,19 +29,28 @@ function memoryCache(
 ) {
   const manifests = new Map<string, MapAreaManifest>();
   const files = new Map<string, Uint8Array>();
+  const summaries = new Map<string, MapAreaManifest['area']>();
   let requests = 0;
   const io: MapCacheIO = {
-    list: async () => [...manifests.values()].map((m) => m.area),
+    list: async () => [...summaries.values()].map((area) => structuredClone(area)),
     readManifest: async (id) => (manifests.has(id) ? structuredClone(manifests.get(id)!) : null),
     saveManifest: async (manifest) => {
       manifests.set(manifest.area.id, structuredClone(manifest));
+      summaries.set(manifest.area.id, structuredClone(manifest.area));
     },
     read: async (id, path) => files.get(id + '/' + path) ?? null,
     write: async (id, path, bytes) => {
       files.set(id + '/' + path, new Uint8Array(bytes));
     },
+    markForRemoval: async (id) => {
+      const area = summaries.get(id);
+      if (!area) return false;
+      summaries.set(id, { ...area, cleanupPending: true });
+      return true;
+    },
     remove: async (id) => {
       manifests.delete(id);
+      summaries.delete(id);
       for (const key of files.keys()) if (key.startsWith(id + '/')) files.delete(key);
     },
     hash: async (bytes) => createHash('sha256').update(bytes).digest('hex'),
@@ -54,7 +63,14 @@ function memoryCache(
       return url.includes('/fonts/') ? new Uint8Array([1, 2, 3]) : new Uint8Array();
     },
   };
-  return { cache: createWorldMapCache(io), manifests, files, io, requests: () => requests };
+  return {
+    cache: createWorldMapCache(io),
+    manifests,
+    files,
+    summaries,
+    io,
+    requests: () => requests,
+  };
 }
 
 test('map estimate bounds tile count and adaptively reduces detail for larger areas', () => {
@@ -356,4 +372,97 @@ test('online display uses attributed global vector maps without analysis claims'
   assert.equal((style.sources as any).world.url, 'https://tiles.openfreemap.org/planet');
   assert.equal((style.sources as any).world.attribution, WORLD_MAP_ATTRIBUTION);
   assert.equal(JSON.stringify(style).includes('tile.openstreetmap.org'), false);
+});
+
+test('map deletion marker failure preserves the map and assets', async () => {
+  const m = memoryCache();
+  const area = await m.cache.downloadMapArea(input);
+  const fileCount = m.files.size;
+  m.io.markForRemoval = async () => {
+    throw new Error('marker write failed');
+  };
+  const outcome = await m.cache.deleteMapArea(area.id);
+  assert.equal(outcome.status, 'unchanged');
+  assert.equal(m.files.size, fileCount);
+  assert.equal((await m.cache.listMapAreas())[0]?.status, 'complete');
+});
+
+test('asset or manifest failure leaves durable unavailable cleanup and retry completes', async () => {
+  for (const phase of ['asset', 'manifest', 'index'] as const) {
+    const m = memoryCache();
+    const area = await m.cache.downloadMapArea(input);
+    const remove = m.io.remove;
+    m.io.remove = async (id) => {
+      if (phase === 'asset') {
+        const key = [...m.files.keys()][0];
+        if (key) m.files.delete(key);
+      } else if (phase === 'manifest' || phase === 'index') {
+        m.manifests.delete(id);
+        for (const key of m.files.keys()) if (key.startsWith(id + '/')) m.files.delete(key);
+      }
+      throw new Error(`failure at ${phase}`);
+    };
+    assert.equal((await m.cache.deleteMapArea(area.id)).status, 'cleanup-pending');
+    const restarted = createWorldMapCache(m.io);
+    const [pending] = await restarted.listMapAreas();
+    assert.equal(pending?.cleanupPending, true);
+    assert.equal(pending?.usableZoom, undefined);
+    await assert.rejects(restarted.readVerifiedManifest(area.id), /removal is incomplete/i);
+    m.io.remove = remove;
+    assert.equal((await restarted.deleteMapArea(area.id)).status, 'complete');
+    assert.deepEqual(await restarted.listMapAreas(), []);
+  }
+});
+
+test('deletion reconciles metadata committed before an acknowledgement error', async () => {
+  const m = memoryCache();
+  const area = await m.cache.downloadMapArea(input);
+  const remove = m.io.remove;
+  m.io.remove = async (id) => {
+    await remove(id);
+    throw new Error('ack failed');
+  };
+  assert.equal((await m.cache.deleteMapArea(area.id)).status, 'complete');
+  assert.deepEqual(await createWorldMapCache(m.io).listMapAreas(), []);
+});
+
+test('a marker committed before an acknowledgement error is recovered as pending', async () => {
+  const m = memoryCache();
+  const area = await m.cache.downloadMapArea(input);
+  const mark = m.io.markForRemoval;
+  m.io.markForRemoval = async (id) => {
+    await mark(id);
+    throw new Error('marker acknowledgement failed');
+  };
+  assert.equal((await m.cache.deleteMapArea(area.id)).status, 'cleanup-pending');
+  assert.equal((await createWorldMapCache(m.io).listMapAreas())[0]?.cleanupPending, true);
+  m.io.markForRemoval = mark;
+  assert.equal((await m.cache.deleteMapArea(area.id)).status, 'complete');
+});
+
+test('deletion cannot race a verifier that could rewrite map metadata', async () => {
+  const m = memoryCache();
+  const area = await m.cache.downloadMapArea(input);
+  const read = m.io.read;
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  m.io.read = async (id, path) => {
+    entered();
+    await gate;
+    return read(id, path);
+  };
+  const verifying = m.cache.verifyMapArea(area.id);
+  await started;
+  assert.equal((await m.cache.deleteMapArea(area.id)).status, 'unchanged');
+  release();
+  await verifying;
+  m.io.read = read;
+  assert.equal((await m.cache.deleteMapArea(area.id)).status, 'complete');
+  assert.deepEqual(await m.cache.listMapAreas(), []);
 });
