@@ -30,22 +30,19 @@ import {
   withDefaultStayDuration,
 } from '../lib/formDrafts';
 import LocalDateHourField from './LocalDateHourField';
-import { Button, Chip, Eyebrow, Field, Icon, Notice, s } from './ui';
+import { Button, Chip, Field, Icon, Notice, s } from './ui';
 import { colors as c } from '../theme';
 import { fromIsoToLocalHour, localHourToIso, timezoneLabel } from '../lib/localDateHour';
 
 const emptyAssessments: Assessment[] = [];
 const startingLimits = { maxWindKnots: 15, maxGustKnots: 20, maxWaveM: 0.5, maxCurrentKnots: 1 };
+const depthFields = ['preferredMaxDepthM', 'minUnderKeelClearanceM', 'safetyMarginM'] as const;
+const operatingFields = ['maxWindKnots', 'maxGustKnots', 'maxWaveM', 'maxCurrentKnots'] as const;
 const numericKeys = [
   'maxDistanceNm',
   'departureContingencyHours',
-  'preferredMaxDepthM',
-  'minUnderKeelClearanceM',
-  'maxWindKnots',
-  'maxGustKnots',
-  'maxWaveM',
-  'maxCurrentKnots',
-  'safetyMarginM',
+  ...depthFields,
+  ...operatingFields,
 ] as const;
 type NumericKey = (typeof numericKeys)[number];
 const feetPerMetre = 1 / CANONICAL_CONVERSIONS.metresPerFoot;
@@ -115,7 +112,15 @@ function useInvalidFields<Key extends string>(order: readonly Key[], reveal?: (k
   };
 }
 
-const searchFieldOrder = ['latitude', 'longitude', ...numericKeys, 'stayHours'] as const;
+const searchFieldOrder = [
+  'latitude',
+  'longitude',
+  'maxDistanceNm',
+  'stayHours',
+  'departureContingencyHours',
+  ...depthFields,
+  ...operatingFields,
+] as const;
 const vesselFieldOrder = [
   'name',
   'type',
@@ -213,9 +218,21 @@ export function SearchSheet({
     ),
   );
   const [coordinatesOpen, setCoordinatesOpen] = useState(!pack);
+  const [depthOpen, setDepthOpen] = useState(false);
+  const [limitsOpen, setLimitsOpen] = useState(false);
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState('');
-  const invalid = useInvalidFields(searchFieldOrder);
+  const invalid = useInvalidFields(searchFieldOrder, (key) => {
+    if (depthFields.some((field) => field === key)) setDepthOpen(true);
+    if (operatingFields.some((field) => field === key)) setLimitsOpen(true);
+  });
+  const displayValue = (key: NumericKey) => {
+    const draft = values[key].trim();
+    return draft ? `${draft} ${numericUnit(key, units).label}` : 'not set';
+  };
+  const seabedSummary = bedding.length
+    ? bedding.map((value) => value[0].toUpperCase() + value.slice(1)).join(', ')
+    : 'Any seabed';
   const valueInBaseUnits = (key: NumericKey) => {
     const ratio = numericUnit(key, units).ratio;
     return parseUnitDraft(values[key], numericReference.current[key], ratio);
@@ -412,26 +429,12 @@ export function SearchSheet({
         </>
       }
     >
-      <View style={{ gap: 20 }}>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <Chip
-            selected={visitMode === 'overnight'}
-            onPress={() => setVisitMode('overnight')}
-            icon="moon"
-          >
-            Overnight
-          </Chip>
-          <Chip
-            selected={visitMode === 'daytime'}
-            onPress={() => setVisitMode('daytime')}
-            icon="sun"
-          >
-            Day stop
-          </Chip>
-        </View>
+      <FormGroup
+        title={mode === 'search' ? 'Search area' : 'Area defaults'}
+        help={mode === 'defaults' ? 'Choose the centre when you start a search.' : undefined}
+      >
         {mode === 'search' ? (
           <View style={{ gap: 12 }}>
-            <Eyebrow>Search area</Eyebrow>
             <MapRegionPicker
               units={units}
               selectedId={selectedArea?.id}
@@ -628,12 +631,29 @@ export function SearchSheet({
             </View>
           ) : null}
         </View>
+      </FormGroup>
+      <FormGroup
+        title={mode === 'search' ? 'Stay window' : 'Stay defaults'}
+        help={mode === 'search' ? `Your local time · ${timezoneLabel()}` : undefined}
+      >
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <Chip
+            selected={visitMode === 'overnight'}
+            onPress={() => setVisitMode('overnight')}
+            icon="moon"
+          >
+            Overnight
+          </Chip>
+          <Chip
+            selected={visitMode === 'daytime'}
+            onPress={() => setVisitMode('daytime')}
+            icon="sun"
+          >
+            Day stop
+          </Chip>
+        </View>
         {mode === 'search' ? (
           <View style={{ gap: 16 }}>
-            <View style={{ gap: 6 }}>
-              <Eyebrow>Stay window</Eyebrow>
-              <Text style={s.help}>Your local time · {timezoneLabel()}</Text>
-            </View>
             <LocalDateHourField
               label="Arrival"
               value={arrival}
@@ -676,8 +696,8 @@ export function SearchSheet({
         ) : null}
         {visitMode === 'daytime' ? (
           <Text style={s.help}>
-            Day stop does not override the dates: stays over 12 hours or crossing midnight at the
-            destination still require overnight permission.
+            Stays over 12 hours or crossing midnight at the destination still require overnight
+            permission.
           </Text>
         ) : null}
         {field(
@@ -685,88 +705,91 @@ export function SearchSheet({
           'Departure contingency',
           'Keep checking conditions after the planned departure in case you leave late.',
         )}
-        <View style={{ gap: 16 }}>
-          <Eyebrow>Depth & seabed</Eyebrow>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-            {field('preferredMaxDepthM', 'Preferred maximum depth')}
-            {field(
-              'minUnderKeelClearanceM',
-              'Under-keel clearance',
-              'Minimum water below your loaded keel.',
-            )}
-          </View>
-          <SeabedSelect value={bedding} onChange={setBedding} />
+      </FormGroup>
+      <FormDisclosure
+        title="Depth & seabed"
+        summary={`Preferred depth ${displayValue('preferredMaxDepthM')} · Under-keel clearance ${displayValue('minUnderKeelClearanceM')} · Swing margin ${displayValue('safetyMarginM')} · ${seabedSummary}`}
+        expanded={depthOpen}
+        onToggle={() => setDepthOpen(!depthOpen)}
+      >
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          {field('preferredMaxDepthM', 'Preferred maximum depth')}
           {field(
-            'safetyMarginM',
-            'Swing-footprint margin',
-            'Extra space beyond the full vessel and rode footprint.',
+            'minUnderKeelClearanceM',
+            'Under-keel clearance',
+            'Minimum water below your loaded keel.',
           )}
-          <Text style={s.help}>
-            If needed, separately labelled +20% and +30% deeper alternatives retain every clearance
-            and equipment check.
-          </Text>
         </View>
-        <View style={{ gap: 16 }}>
-          <Eyebrow>Operating limits</Eyebrow>
-          <Text style={s.help}>
-            Set limits for your boat, equipment and crew. Starting values are editable planning
-            examples; they are not equipment ratings or a safe-weather guarantee.
-          </Text>
-          <Button
-            small
-            secondary
-            onPress={() => {
-              Object.assign(numericReference.current, startingLimits);
-              setValues((p) => ({
-                ...p,
-                ...Object.fromEntries(
-                  Object.entries(startingLimits).map(([key, value]) => [
-                    key,
-                    formatted(value * numericUnit(key as NumericKey, units).ratio),
-                  ]),
-                ),
-              }));
-              setError('');
-            }}
-          >
-            Use starting defaults
-          </Button>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-            {field(
-              'maxWindKnots',
-              'Sustained wind',
-              'Maximum forecast steady wind during the stay.',
-            )}
-            {field(
-              'maxGustKnots',
-              'Wind gusts',
-              'Maximum brief peak; consider your anchor and windage.',
-            )}
-          </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-            {field(
-              'maxWaveM',
-              'Wave height',
-              'Maximum significant wave height or swell. Individual waves may be higher; period and exposure also matter.',
-            )}
-            {field(
-              'maxCurrentKnots',
-              'Current',
-              'Maximum forecast current; allow for reversing flow.',
-            )}
-          </View>
-          <Pressable
-            accessibilityRole="link"
-            onPress={() =>
-              void Linking.openURL('https://www.weather.gov/safety/safeboating-marine')
-            }
-          >
-            <Text style={{ color: c.green, fontSize: 12, textDecorationLine: 'underline' }}>
-              NWS marine forecast guidance
-            </Text>
-          </Pressable>
+        <SeabedSelect value={bedding} onChange={setBedding} />
+        {field(
+          'safetyMarginM',
+          'Swing-footprint margin',
+          'Extra space beyond the full vessel and rode footprint.',
+        )}
+        <Text style={s.help}>
+          If needed, separately labelled +20% and +30% deeper alternatives retain every clearance
+          and equipment check.
+        </Text>
+      </FormDisclosure>
+      <FormDisclosure
+        title="Operating limits"
+        summary={`Wind ${displayValue('maxWindKnots')} · Gusts ${displayValue('maxGustKnots')} · Waves ${displayValue('maxWaveM')} · Current ${displayValue('maxCurrentKnots')}`}
+        expanded={limitsOpen}
+        onToggle={() => setLimitsOpen(!limitsOpen)}
+      >
+        <Text style={s.help}>
+          Set limits for your boat, equipment and crew. Starting values are editable planning
+          examples; they are not equipment ratings or a safe-weather guarantee.
+        </Text>
+        <Button
+          small
+          secondary
+          onPress={() => {
+            Object.assign(numericReference.current, startingLimits);
+            setValues((p) => ({
+              ...p,
+              ...Object.fromEntries(
+                Object.entries(startingLimits).map(([key, value]) => [
+                  key,
+                  formatted(value * numericUnit(key as NumericKey, units).ratio),
+                ]),
+              ),
+            }));
+            setError('');
+            for (const key of operatingFields) invalid.clear(key);
+          }}
+        >
+          Use starting defaults
+        </Button>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          {field('maxWindKnots', 'Sustained wind', 'Maximum forecast steady wind during the stay.')}
+          {field(
+            'maxGustKnots',
+            'Wind gusts',
+            'Maximum brief peak; consider your anchor and windage.',
+          )}
         </View>
-      </View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          {field(
+            'maxWaveM',
+            'Wave height',
+            'Maximum significant wave height or swell. Individual waves may be higher; period and exposure also matter.',
+          )}
+          {field(
+            'maxCurrentKnots',
+            'Current',
+            'Maximum forecast current; allow for reversing flow.',
+          )}
+        </View>
+        <Pressable
+          accessibilityRole="link"
+          onPress={() => void Linking.openURL('https://www.weather.gov/safety/safeboating-marine')}
+        >
+          <Text style={{ color: c.green, fontSize: 12, textDecorationLine: 'underline' }}>
+            NWS marine forecast guidance
+          </Text>
+        </Pressable>
+      </FormDisclosure>
     </Sheet>
   );
 }
