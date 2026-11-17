@@ -189,3 +189,69 @@ test('expired draft asks for date review before opening planner', async ({ page 
   await expect(page.getByRole('heading', { name: 'Anchor plan', exact: true })).toBeVisible();
   await expect(field(page, 'Latitude')).toHaveValue('43.01');
 });
+
+test('a new search position saves its first draft and reopens offline with exact inputs', async ({
+  page,
+}) => {
+  await seed(page, []);
+  await page.route('**/v1/regions/discover', async (route) => {
+    const request = route.request().postDataJSON();
+    const pack = createEmptyRegion(request.center, request.radiusNm, 'First-save test area');
+    pack.sources = [
+      {
+        id: 'test-place-source',
+        name: 'Intercepted test source',
+        url: 'https://fixture.invalid/source',
+        retrievedAt: pack.generatedAt,
+        validUntil: pack.validUntil,
+        attribution: 'Test only',
+        license: 'Fixture',
+        synthetic: false,
+      },
+    ];
+    pack.places = [
+      {
+        id: 'test-place',
+        name: 'First-save test anchorage',
+        kind: 'anchorage',
+        position: [16.01, 43.01],
+        feeStatus: 'unknown',
+        sourceIds: ['test-place-source'],
+        overnightAllowed: null,
+        availability: 'unknown',
+        holding: 'unknown',
+        facilities: [],
+        notes: [],
+      },
+    ];
+    await route.fulfill({ json: { pack, providers: [], notices: [], partial: true } });
+  });
+  await btn(page, 'Plan a stay').click();
+  await btn(page, 'Enter coordinates').click();
+  await field(page, 'Latitude').fill('43');
+  await field(page, 'Longitude').fill('16');
+  await btn(page, 'Search this area').click();
+  await btn(page, 'List view').click();
+  await page.getByRole('button', { name: /First-save test anchorage/ }).click();
+  await btn(page, 'Plan this position').click();
+  await field(page, 'Latitude').fill('43.012');
+  await field(page, 'Plan name').fill('First new draft');
+  await btn(page, 'Save draft').click();
+  await expect(page.getByText(/Plan draft saved/)).toBeVisible();
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('anchorai:v1:saved-plans-v2')!),
+  );
+  expect(saved).toHaveLength(1);
+  expect(saved[0].payload.selectedPosition).toEqual([16.01, 43.012]);
+  expect(saved[0].payload.depthAllowancePercent).toBe(0);
+  expect(saved[0].payload.vesselFingerprint).toBe(hash);
+  expect(saved[0].payload.sourcePacks).toHaveLength(1);
+  await page.reload();
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await page.getByRole('switch', { name: 'Offline planning', exact: true }).click();
+  await openSaved(page);
+  await expect(page.getByText('First new draft', { exact: true })).toBeVisible();
+  await btn(page, 'Open & reassess').click();
+  await expect(field(page, 'Latitude')).toHaveValue('43.012');
+  await expect(page.getByRole('checkbox', { name: /Confirm actual depth/ })).not.toBeChecked();
+});
