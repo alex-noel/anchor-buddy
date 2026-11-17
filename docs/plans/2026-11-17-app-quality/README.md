@@ -4,6 +4,8 @@
 
 Start with **Q01, Q06 and Q08** in parallel: visual foundations, a repeatable browser harness, and durable saves. Assign Q33 soon after a watch reviewer is available. Check native toolchain availability early for Q36/Q37; do not let external setup stall independent UI work.
 
+Execution was subsequently authorized with model/reasoning tiers matched to complexity. Read the [execution and acceptance status](EXECUTION.md) before dispatching: the initial order above is retained as planning history. Current task statuses and evidence are in the manifest and individual briefs.
+
 - [Worker instructions and assignment prompt](WORKER_INSTRUCTIONS.md)
 - [Dispatch order and shared-file ownership](DISPATCH.md)
 - [Current findings and verification](AUDIT.md)
@@ -84,4 +86,4 @@ This is the next **application-quality tranche**, replacing the old plan's propo
 
 Broader reviewed ENC/station/equipment/tariff work, native-engine parity and overnight/on-water trials, provider scaling, API resource/privacy hardening and deployment remain in the [earlier backlog](../2026-11-12-two-week/TASK_INDEX.md) and [release checklist](../../release-checklist.md). Current code findings outside this tranche are recorded in [AUDIT](AUDIT.md). Missing reviewed equipment/data cannot be fixed by better UI or fabricated values.
 
-No new account system, booking/payments, AI integration, new provider expansion, cloud deployment or runtime sample data is included. A usable internal app and a certified nautical release are separate acceptance outcomes. The plan leaves app source unchanged.
+No new account system, booking/payments, AI integration, new provider expansion, cloud deployment or runtime sample data is included. A usable internal app and a certified nautical release are separate acceptance outcomes. The initial plan left app source unchanged; the authorized execution now includes the implementation and verification recorded in EXECUTION.md.

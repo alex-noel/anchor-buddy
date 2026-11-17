@@ -6,6 +6,8 @@ Anchor Buddy is a React Native anchoring planner for iOS and Android, with a bro
 
 New boat profiles start blank. Profiles saved by older builds must be checked and confirmed; any demonstration scope guidance is removed. Older search snapshots without provenance keep their search preferences but hide historical result values until reassessed.
 
+The [17 November quality pass](docs/validation/quality-acceptance-2026-11-17.md) adds recoverable setup and saves, named anchor-plan drafts, clearer evidence and forecast states, keyboard-accessible forms, responsive map/list layouts and verified browser offline recovery. Drafts restore proposed inputs for reassessment; arrival confirmations and watch state are never restored. The [40-task execution record](docs/plans/2026-11-17-app-quality/EXECUTION.md) tracks implementation separately from native and external acceptance.
+
 ## What is implemented
 
 | Area                      | Delivered behavior                                                                                                                                                                                                 | Release limitation                                                                                                                                      |
@@ -119,7 +121,7 @@ npm audit
 
 Web and iOS/Android JavaScript/Hermes exports, Swift syntax parsing and Expo autolinking have been exercised during development. These checks do not establish native binary compilation or real device monitoring. Record fresh test results for each change rather than treating a past test count as release evidence. The walkthrough above covers the current app flow; native overnight/device acceptance remains outstanding.
 
-During the initial implementation on **2026-10-30**, the dependency audit reported advisories in transitive **zod** and **deepmerge** dependencies, and no compatible patched resolution was identified then. This historical result is not a current security assessment. Rerun `npm audit`, reassess reachable dependency paths and use supported remediation before distribution; do not force incompatible overrides merely to suppress audit output.
+During the initial implementation on **2026-10-30**, the dependency audit reported transitive **zod** and **deepmerge** advisories. That is historical evidence. The fresh **2026-11-17** `npm audit` reports four moderate dependency findings along the **minimatch → @expo/fingerprint → expo / @maplibre/maplibre-react-native** paths, with zero high or critical findings in that audit response. npm's proposed top-level fixes are major-version downgrades, which were not applied during the UX quality pass. Supported remediation and reachable-impact review remain open; this is not a security-clean or distribution approval.
 
 ## AI, privacy and project map
 

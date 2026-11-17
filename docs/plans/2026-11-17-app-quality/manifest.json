@@ -5,7 +5,7 @@
   "timezone": "Europe/Warsaw",
   "baseline": "f7e00acdb9423fb212486931a0cb354e227e41ec",
   "taskCount": 40,
-  "scope": "Improve current app UX/UI and finish existing application behavior. Planning only; no task implementation is authorized by this document alone.",
+  "scope": "Improve current app UX/UI and finish existing application behavior. User authorized execution on 17 November 2026 using model and reasoning tiers matched to complexity.",
   "statusPolicy": [
     "planned",
     "in_progress",
@@ -36,9 +36,13 @@
       "verify": "Run mobile typecheck; inspect shared controls at 390 and 1280 CSS px and 200% text. No snapshot-only unit tests.",
       "old": "APP-07",
       "id": "Q01",
-      "status": "planned",
+      "status": "done",
       "dependencies": [],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "48eb8fb",
+      "validation": "docs/validation/quality-q01.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
     },
     {
       "n": 2,
@@ -66,11 +70,15 @@
       "verify": "Mobile typecheck plus keyboard/screen-reader smoke on mounted controls. Add only interaction tests for the selection behavior.",
       "old": "APP-07",
       "id": "Q02",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "4b049a3",
+      "validation": "docs/validation/quality-q02.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
     },
     {
       "n": 3,
@@ -97,11 +105,15 @@
       "verify": "Mobile typecheck and one mounted invalid-field check; test only nontrivial error-path mapping. Do not change domain validation.",
       "old": "APP-02; APP-07",
       "id": "Q03",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "cd9ce4d",
+      "validation": "docs/validation/quality-q03.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
     },
     {
       "n": 4,
@@ -130,13 +142,17 @@
       "verify": "Mounted web keyboard flow, 390×844 and short-height checks; record native keyboard behavior separately once a build is available.",
       "old": "APP-02; APP-07",
       "id": "Q04",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q02",
         "Q03",
         "Q08"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q04.md",
+      "commit": "e40e985",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
     },
     {
       "n": 5,
@@ -164,12 +180,16 @@
       "verify": "Before/after captures at stated widths, 200% text and keyboard checks; mobile typecheck. Keep controller transitions unchanged.",
       "old": "APP-03; APP-07",
       "id": "Q05",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q02"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q05.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
     },
     {
       "n": 6,
@@ -196,9 +216,13 @@
       "verify": "Run the new command twice from isolated contexts and npm run check:runtime. Keep positive nautical fixtures behind existing test-only boundaries.",
       "old": "QA-01",
       "id": "Q06",
-      "status": "planned",
+      "status": "done",
       "dependencies": [],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "48eb8fb",
+      "validation": "docs/validation/quality-q06.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
     },
     {
       "n": 7,
@@ -226,9 +250,13 @@
       "verify": "Extend units/formDrafts/mapDownloadControls tests for boundary and round-trip cases; run domain/mobile tests and typechecks. Numerical diff needs independent review.",
       "old": "FOUNDATION-02 follow-through; APP-07",
       "id": "Q07",
-      "status": "planned",
+      "status": "done",
       "dependencies": [],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "e1595a0",
+      "validation": "docs/validation/quality-q07.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
     },
     {
       "n": 8,
@@ -257,9 +285,13 @@
       "verify": "Inject rejected/delayed writes; test retry and reload. Run mobile library tests/typecheck and a mounted form flow. Reviewer inspects state/publication order.",
       "old": "APP-02",
       "id": "Q08",
-      "status": "planned",
+      "status": "done",
       "dependencies": [],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "e1595a0",
+      "validation": "docs/validation/quality-q08.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
     },
     {
       "n": 9,
@@ -288,11 +320,15 @@
       "verify": "Controlled delayed/reordered/rejected write tests and Settings reload smoke; mobile tests/typecheck.",
       "old": "APP-02",
       "id": "Q09",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q08"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "09e783a",
+      "validation": "docs/validation/quality-q09.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
     },
     {
       "n": 10,
@@ -321,11 +357,15 @@
       "verify": "Fault-injection cases for one rejection, malformed JSON, unknown version and mixed valid records; reload/retry smoke. Independent review required for migration/deletion behavior.",
       "old": "APP-02",
       "id": "Q10",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q08"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q10.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
     },
     {
       "n": 11,
@@ -356,13 +396,17 @@
       "verify": "Inject interruption before/during completion and reload; cover first setup and reopened setup. Review migration compatibility before merging.",
       "old": "APP-02",
       "id": "Q11",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q08",
         "Q09",
         "Q10"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q11.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
     },
     {
       "n": 12,
@@ -392,14 +436,18 @@
       "verify": "Before/after phone/desktop captures plus invalid→correct→save/reload journey; mobile typecheck.",
       "old": "APP-02; APP-07",
       "id": "Q12",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q03",
         "Q04",
         "Q07",
         "Q08"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q12.md",
+      "commit": "ba9bba8",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
     },
     {
       "n": 13,
@@ -431,7 +479,7 @@
       "verify": "Mounted new/default/edit flows at phone width with invalid radius and multiple seabeds; existing formDrafts tests and typecheck.",
       "old": "APP-03; APP-07",
       "id": "Q13",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q03",
         "Q04",
@@ -439,7 +487,11 @@
         "Q08",
         "Q12"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q13.md",
+      "commit": "a771390",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
     },
     {
       "n": 14,
@@ -468,12 +520,16 @@
       "verify": "Existing localDateHour tests plus keyboard calendar journey and two timezone/DST examples; do not redesign timezone conversion without review.",
       "old": "APP-03; APP-07",
       "id": "Q14",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q02",
         "Q13"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q14.md",
+      "commit": "05810d3",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
     },
     {
       "n": 15,
@@ -502,11 +558,15 @@
       "verify": "Delayed, cancelled, empty, offline and provider-failure cases using controlled transport; mounted search/reopen flow and controller tests.",
       "old": "APP-03; QA-01",
       "id": "Q15",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q13"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q15.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
     },
     {
       "n": 16,
@@ -535,12 +595,17 @@
       "verify": "Inject map/source events, inspect online→failure→recovery and offline-cache behavior. Web mounted check; native check after Q36/Q37.",
       "old": "APP-04; APP-05",
       "id": "Q16",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q05"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q16.md",
+      "commit": "3f792ac",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 17,
@@ -570,12 +635,17 @@
       "verify": "Deterministic cases with >50 results, filter/sort changes, removed selection and manual pin; mounted map/list check plus native later.",
       "old": "APP-04",
       "id": "Q17",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q16"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q17.md",
+      "commit": "3f792ac",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 18,
@@ -602,12 +672,16 @@
       "verify": "Visual matrix using existing test-only assessments with long names, unknowns and each status; phone/desktop and screen-reader smoke. No calculation changes.",
       "old": "APP-03; APP-07",
       "id": "Q18",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q02"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "cd9ce4d",
+      "validation": "docs/validation/quality-q18.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
     },
     {
       "n": 19,
@@ -637,13 +711,17 @@
       "verify": "Mounted matrix for each empty state and combined filters; workspace tests for reset semantics and typecheck.",
       "old": "APP-03; APP-04",
       "id": "Q19",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q05",
         "Q15",
         "Q18"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q19.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
     },
     {
       "n": 20,
@@ -672,13 +750,17 @@
       "verify": "Review excluded/insufficient/passing test-only examples, long source lists and missing fields. Domain-aware reviewer checks wording; phone/desktop captures and typecheck.",
       "old": "APP-03",
       "id": "Q20",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q04",
         "Q18"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q20.md",
+      "commit": "01507bd",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
     },
     {
       "n": 21,
@@ -709,12 +791,16 @@
       "verify": "Pure presentation-helper tests for gaps, overlap, nulls, expiry and unit systems; mounted details check. Reviewer verifies that coverage labels follow existing contracts.",
       "old": "APP-03",
       "id": "Q21",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q14",
         "Q20"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q21.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / high"
     },
     {
       "n": 22,
@@ -744,11 +830,15 @@
       "verify": "Formatting tests for null currency, invalid code, zero/unknown status, JPY and KWD; domain/mobile typechecks and relevant tests. Reviewer approves formatting policy before coding.",
       "old": "SAFE-03 presentation subset",
       "id": "Q22",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q07"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "09e783a",
+      "validation": "docs/validation/quality-q22.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
     },
     {
       "n": 23,
@@ -777,14 +867,19 @@
       "verify": "Mounted manual/map/cancel/edit-search journeys and existing coordinate tests; native GPS check where available. Preserve assessment engine behavior.",
       "old": "APP-06; APP-08",
       "id": "Q23",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q03",
         "Q04",
         "Q17"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q23.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 24,
@@ -821,7 +916,7 @@
       "verify": "Save→reload→open→reassess with changed vessel, expired dates and unavailable data; migration/failure tests. Schema and watch-boundary review required before implementation.",
       "old": "APP-06",
       "id": "Q24",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q08",
         "Q10",
@@ -829,7 +924,12 @@
         "Q25",
         "Q26"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q24.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 25,
@@ -859,13 +959,17 @@
       "verify": "At-capacity save/cancel/replace regression and reload; mounted empty/mixed/long-name library. No cloud sync or new account system.",
       "old": "APP-05; APP-06",
       "id": "Q25",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q08",
         "Q10"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q25.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
     },
     {
       "n": 26,
@@ -897,12 +1001,17 @@
       "verify": "Inject failure before removal, after some assets, and before/after metadata persistence; retry and reload each state. Verify delayed/successful/protected deletes and keyboard focus. Storage reviewer checks partial-state reconciliation.",
       "old": "APP-05",
       "id": "Q26",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q08",
         "Q25"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q26.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 27,
@@ -931,13 +1040,18 @@
       "verify": "Mounted prepare→partial→pause→resume→complete and evidence-failure scenarios using controlled downloads; existing download tests/typecheck.",
       "old": "APP-05",
       "id": "Q27",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q02",
         "Q04"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q27.md",
+      "commit": "01507bd",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 28,
@@ -972,14 +1086,18 @@
       "verify": "Eight-plus-region retention and quota failure/retry tests; verify byte totals without double-counting shared assets. Persistence policy review before schema changes.",
       "old": "APP-05",
       "id": "Q28",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q08",
         "Q10",
         "Q25",
         "Q26"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q28.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
     },
     {
       "n": 29,
@@ -1009,12 +1127,17 @@
       "verify": "Cancel during manifest, transfer, verification and immediately before commit; separately unmount during commit and simulate uncertain completion. Read back active-pointer state before cleanup, run installer fault tests and mounted Settings smoke. Independent activation-boundary review.",
       "old": "APP-05",
       "id": "Q29",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q08",
         "Q10"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q29.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 30,
@@ -1045,13 +1168,17 @@
       "verify": "Online→offline→reconnect, preferred-offline and expired/partial evidence scenarios; connectivity/controller tests and mounted smoke.",
       "old": "APP-03; APP-05",
       "id": "Q30",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q05",
         "Q15",
         "Q20"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q30.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
     },
     {
       "n": 31,
@@ -1080,11 +1207,15 @@
       "verify": "Exported-build tests for first install, offline reload, waiting version and failed integrity update; scripts/web-offline.test.mjs. Reviewer checks worker lifecycle changes.",
       "old": "APP-05; QA-02",
       "id": "Q31",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q05"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q31.md",
+      "commit": "d134015",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
     },
     {
       "n": 32,
@@ -1114,7 +1245,7 @@
       "verify": "Phone/desktop settings journey with failed then successful endpoint/catalogue operations and keyboard navigation; typecheck. Preserve the stored endpoint/security rules.",
       "old": "APP-03; APP-05; APP-07",
       "id": "Q32",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q01",
         "Q02",
@@ -1122,7 +1253,11 @@
         "Q29",
         "Q31"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q32.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
     },
     {
       "n": 33,
@@ -1149,9 +1284,15 @@
       "verify": "Focused fix-validation and delayed-request tests plus mounted capture state flow; native acquisition on available builds. Independent watch review required.",
       "old": "APP-08",
       "id": "Q33",
-      "status": "planned",
+      "status": "done",
       "dependencies": [],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "e1595a0",
+      "validation": "docs/validation/quality-q33.md",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
     },
     {
       "n": 34,
@@ -1182,12 +1323,18 @@
       "verify": "Fake monotonic-clock tests for expiry boundary, delayed native success, background/resume and wall-clock jumps; bridge checks and actual audible confirmation on supported devices. Do not add native contract fields within this bounded UI change.",
       "old": "APP-08",
       "id": "Q34",
-      "status": "planned",
+      "status": "blocked",
       "dependencies": [
         "Q02",
         "Q33"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q34.md",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "commit": "cd9ce4d",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Implementation and isolated lifecycle checks pass. Actual native audible alarm and hearing confirmation require supported builds/devices."
     },
     {
       "n": 35,
@@ -1215,12 +1362,17 @@
       "verify": "Bridge/mounted tests for cancel, delayed stop, failure and confirmed stop; real device transition during native acceptance. Watch reviewer approves.",
       "old": "APP-08",
       "id": "Q35",
-      "status": "planned",
+      "status": "blocked",
       "dependencies": [
         "Q04",
         "Q34"
       ],
-      "review": "Standard review; domain/watch wording review where named in acceptance."
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q35.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Implementation and isolated stop/session/race checks pass. Real native transition and the documented expected-session protocol limitation require native acceptance."
     },
     {
       "n": 36,
@@ -1250,9 +1402,15 @@
       "old": "WATCH-01; APP-08",
       "gate": "Full Xcode/iOS SDK, CocoaPods; signing and a physical device for device/audio evidence. Toolchain availability must be checked when dispatched.",
       "id": "Q36",
-      "status": "planned",
+      "status": "blocked",
       "dependencies": [],
-      "review": "Specialist review and actual external evidence where required."
+      "review": "Specialist review and actual external evidence where required.",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "validation": "docs/validation/quality-native-preflight.md",
+      "commit": null,
+      "localVerification": "preflight only; build unavailable",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Full Xcode and iPhoneOS SDK are unavailable; native build, signing/install and device checks cannot run."
     },
     {
       "n": 37,
@@ -1281,9 +1439,15 @@
       "old": "WATCH-02; APP-08",
       "gate": "Supported JDK and Android SDK/NDK; physical Android device for background/audio evidence. Verify requirements against the installed Expo version when dispatched.",
       "id": "Q37",
-      "status": "planned",
+      "status": "blocked",
       "dependencies": [],
-      "review": "Specialist review and actual external evidence where required."
+      "review": "Specialist review and actual external evidence where required.",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "validation": "docs/validation/quality-native-preflight.md",
+      "commit": null,
+      "localVerification": "preflight only; build unavailable",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Android SDK/NDK are unavailable and the only installed JVM is Java 11; supported build toolchain and device checks are required."
     },
     {
       "n": 38,
@@ -1325,7 +1489,7 @@
       "verify": "Run browser accessibility/layout cases with measured viewport and screenshots; manual keyboard and screen-reader evidence. Native results depend on Q36/Q37 and devices.",
       "old": "APP-07; QA-01",
       "id": "Q38",
-      "status": "planned",
+      "status": "blocked",
       "dependencies": [
         "Q06",
         "Q11",
@@ -1344,7 +1508,12 @@
         "Q32",
         "Q35"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q38.md",
+      "commit": "529d584",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium",
+      "blocker": "All five browser matrix cases pass. Native Dynamic Type/font scaling, software keyboard, VoiceOver/TalkBack and spoken accessibility evidence remain unavailable."
     },
     {
       "n": 39,
@@ -1385,7 +1554,7 @@
       "verify": "Run exported service-worker browser suite with network actually disabled, plus storage fault cases and existing worker tests. Retain failure artifacts and exact build identity.",
       "old": "QA-02; APP-05",
       "id": "Q39",
-      "status": "planned",
+      "status": "done",
       "dependencies": [
         "Q06",
         "Q08",
@@ -1402,7 +1571,11 @@
         "Q30",
         "Q31"
       ],
-      "review": "Independent review of changed state, contracts and failure handling."
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q39.md",
+      "commit": "0d4cd61",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
     },
     {
       "n": 40,
@@ -1471,7 +1644,7 @@
       "old": "QA-04; OPS-04 evidence follow-through",
       "gate": "Native physical-device trials, native-engine parity and maritime/on-water approval require real external evidence; this plan does not supply that evidence.",
       "id": "Q40",
-      "status": "planned",
+      "status": "blocked",
       "dependencies": [
         "Q01",
         "Q02",
@@ -1513,7 +1686,29 @@
         "Q38",
         "Q39"
       ],
-      "review": "Specialist review and actual external evidence where required."
+      "review": "Specialist review and actual external evidence where required.",
+      "validation": "docs/validation/quality-acceptance-2026-11-17.md",
+      "commit": null,
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Local acceptance report and reconciliation are complete; full acceptance remains blocked by native/device and external maritime/parity/overnight gates."
     }
-  ]
+  ],
+  "candidate": "0d4cd619770c7e90cb334930901c56ac82984990",
+  "productionImplementation": "f15be87",
+  "executionSummary": {
+    "locallyVerified": 34,
+    "blockedOnExternalAcceptance": 6,
+    "blockedTasks": [
+      "Q34",
+      "Q35",
+      "Q36",
+      "Q37",
+      "Q38",
+      "Q40"
+    ],
+    "productionCodeUnchangedAfter": "f15be87",
+    "publicNauticalReleaseApproved": false
+  },
+  "statusMeaning": "done records bounded source/local verification. Native hardware, spoken accessibility and external release evidence are never inferred; unresolved acceptance is recorded in blocked tasks and task evidence."
 }
