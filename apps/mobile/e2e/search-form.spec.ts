@@ -238,3 +238,102 @@ test('location lookup only submits explicitly and discards late replies', async 
     for (const release of held) release();
   }
 });
+
+test.describe('stay calendar in a different timezone from the selected area', () => {
+  test.use({ timezoneId: 'America/New_York', locale: 'en-US' });
+
+  test('calendar keyboard navigation preserves stay length through a repeated arrival hour', async ({
+    page,
+  }) => {
+    await page.clock.setFixedTime(new Date('2026-10-30T12:00:00Z'));
+    await configureVessel(page);
+    await finishSetup(page);
+    await button(page, 'Plan a stay').click();
+    const search = page.getByRole('dialog', { name: 'Plan the stay', exact: true });
+    await search.getByRole('button', { name: /Browse coastal regions/ }).click();
+    await search.getByRole('button', { name: /Choose Palma/ }).click();
+    await expect(
+      search.getByText('Times entered in device timezone · America/New_York'),
+    ).toBeVisible();
+    await expect(search.getByText('Selected area timezone · Europe/Madrid')).toBeVisible();
+    const trigger = search.getByRole('button', { name: /^Arrival date:/ });
+    const calendar = search.getByRole('grid', { name: /Arrival calendar/ });
+    const day = (name: string) => calendar.getByRole('button', { name, exact: true });
+    await trigger.press('Enter');
+    await expect(calendar.getByRole('columnheader', { name: 'Monday', exact: true })).toBeVisible();
+    const first = day('Friday, October 30, 2026');
+    await expect(first).toBeFocused();
+    await expect(calendar.getByRole('gridcell', { selected: true })).toContainText('30');
+    expect((await first.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+
+    await page.keyboard.press('ArrowRight');
+    await expect(day('Saturday, October 31, 2026')).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(day('Sunday, November 1, 2026')).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(day('Monday, October 26, 2026')).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(day('Sunday, November 1, 2026')).toBeFocused();
+    await page.keyboard.press('PageDown');
+    await expect(day('Tuesday, December 1, 2026')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(calendar).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(trigger).toHaveAccessibleName('Arrival date: Friday, October 30, 2026');
+
+    await trigger.press('Enter');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    await expect(trigger).toHaveAccessibleName('Arrival date: Sunday, November 1, 2026');
+    await expect(trigger).toBeFocused();
+    const arrivalHour = search.getByRole('combobox', { name: 'Arrival hour', exact: true });
+    async function chooseRepeatedHour() {
+      await arrivalHour.press('Home');
+      await arrivalHour.press('ArrowDown');
+      await arrivalHour.press('Enter');
+    }
+    await chooseRepeatedHour();
+    const occurrence = search.getByRole('combobox', {
+      name: 'Arrival daylight-saving occurrence',
+      exact: true,
+    });
+    await occurrence.click();
+    await search.getByRole('option', { name: /Second 1 AM/ }).click();
+    await expect(occurrence).toContainText(/Second 1 AM/);
+    await expect(search.getByText(/Stay · 18 h · Departure/)).toContainText(/Nov 1.*7:00 PM/);
+    await expect(search.getByText(/Contingency ends ·/)).toContainText(/Nov 1.*10:00 PM/);
+
+    await chooseRepeatedHour();
+    const departureHour = search.getByRole('combobox', { name: 'Departure hour', exact: true });
+    await departureHour.click();
+    await search.getByRole('option', { name: '8 PM', exact: true }).click();
+    await occurrence.click();
+    await search.getByRole('option', { name: /First 1 AM/ }).click();
+    await expect(search.getByText(/Stay · 20 h · Departure/)).toContainText(/Nov 1.*8:00 PM/);
+    await page.route('**/v1/regions/discover', async (route) => {
+      const { center, radiusNm } = route.request().postDataJSON() as {
+        center: Position;
+        radiusNm: number;
+      };
+      await route.fulfill({
+        json: {
+          pack: createEmptyRegion(center, radiusNm),
+          providers: [],
+          partial: true,
+          notices: [],
+        },
+      });
+    });
+    const submitted = page.waitForRequest(
+      (request) => new URL(request.url()).pathname === '/v1/regions/discover',
+      { timeout: 10_000 },
+    );
+    await button(search, 'Search this area').click();
+    expect((await submitted).postDataJSON()).toMatchObject({
+      from: '2026-11-01T05:00:00.000Z',
+      until: '2026-11-02T04:00:00.000Z',
+      timezone: 'Europe/Madrid',
+    });
+  });
+});

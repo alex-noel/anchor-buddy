@@ -32,7 +32,13 @@ import {
 import LocalDateHourField from './LocalDateHourField';
 import { Button, Chip, Field, Icon, Notice, s, type ControlState } from './ui';
 import { colors as c } from '../theme';
-import { fromIsoToLocalHour, localHourToIso, timezoneLabel } from '../lib/localDateHour';
+import {
+  fromIsoToLocalHour,
+  localHourToIso,
+  stayTiming,
+  timezoneLabel,
+  type LocalDateHour,
+} from '../lib/localDateHour';
 
 const emptyAssessments: Assessment[] = [];
 const startingLimits = { maxWindKnots: 15, maxGustKnots: 20, maxWaveM: 0.5, maxCurrentKnots: 1 };
@@ -67,6 +73,16 @@ function numericUnit(key: NumericKey, units: UnitSystem) {
 }
 function formatted(value: number) {
   return String(Number(value.toFixed(2)));
+}
+
+function localInstantLabel(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
 }
 
 function useDirtyDraft(values: readonly unknown[]) {
@@ -231,6 +247,7 @@ export function SearchSheet({
   }, [offline, cancelLookup]);
   const [arrival, setArrival] = useState(() => fromIsoToLocalHour(search.arrival));
   const [departure, setDeparture] = useState(() => fromIsoToLocalHour(search.departure));
+  const lastValidArrival = useRef<LocalDateHour | null>(arrival);
   const [stayHours, setStayHours] = useState(() =>
     String(
       Math.max(
@@ -271,6 +288,12 @@ export function SearchSheet({
     ...(mode === 'search' ? [arrival, departure, locationQuery] : [stayHours]),
   ]);
   const radius = valueInBaseUnits('maxDistanceNm');
+  const contingencyHours = valueInBaseUnits('departureContingencyHours');
+  const deviceTimezone = timezoneLabel();
+  const timing = useMemo(
+    () => (mode === 'search' ? stayTiming(arrival, departure, contingencyHours) : null),
+    [mode, arrival, departure, contingencyHours, deviceTimezone],
+  );
   const liveRadius = pack?.validation.status !== 'reviewed' && (mode === 'defaults' || !offline);
   const minRadius = liveRadius ? 0.25 : 0.01;
   const maxRadius = liveRadius ? 25 : 50;
@@ -344,6 +367,29 @@ export function SearchSheet({
     }));
     setError('');
     invalid.clear('maxDistanceNm');
+  };
+  const changeArrival = (next: LocalDateHour) => {
+    const prior = lastValidArrival.current;
+    try {
+      localHourToIso(next);
+      if (prior) setDeparture((current) => moveStayArrival(prior, current, next));
+      lastValidArrival.current = next;
+    } catch {
+      // Keep the last valid arrival as the duration baseline while the user
+      // resolves an ambiguous or skipped local hour.
+    }
+    setArrival(next);
+    setError('');
+  };
+  const changeDeparture = (next: LocalDateHour) => {
+    try {
+      localHourToIso(arrival);
+    } catch {
+      // This departure was chosen explicitly during the unresolved arrival.
+      lastValidArrival.current = null;
+    }
+    setDeparture(next);
+    setError('');
   };
   const save = async () => {
     if (saveLock.current) return;
@@ -681,8 +727,17 @@ export function SearchSheet({
       </FormGroup>
       <FormGroup
         title={mode === 'search' ? 'Stay window' : 'Stay defaults'}
-        help={mode === 'search' ? `Your local time · ${timezoneLabel()}` : undefined}
+        help={
+          mode === 'search' ? `Times entered in device timezone · ${deviceTimezone}` : undefined
+        }
       >
+        {mode === 'search' && selectedArea && selectedArea.timezone !== deviceTimezone ? (
+          <Text style={s.help}>
+            {selectedArea.timezone
+              ? `Selected area timezone · ${selectedArea.timezone}`
+              : 'Selected area timezone unavailable'}
+          </Text>
+        ) : null}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <Chip
             selected={visitMode === 'overnight'}
@@ -701,23 +756,8 @@ export function SearchSheet({
         </View>
         {mode === 'search' ? (
           <View style={{ gap: 16 }}>
-            <LocalDateHourField
-              label="Arrival"
-              value={arrival}
-              onChange={(next) => {
-                setDeparture(moveStayArrival(arrival, departure, next));
-                setArrival(next);
-                setError('');
-              }}
-            />
-            <LocalDateHourField
-              label="Departure"
-              value={departure}
-              onChange={(next) => {
-                setDeparture(next);
-                setError('');
-              }}
-            />
+            <LocalDateHourField label="Arrival" value={arrival} onChange={changeArrival} />
+            <LocalDateHourField label="Departure" value={departure} onChange={changeDeparture} />
             <Text style={s.help}>
               Changing arrival moves departure too. Review both dates after changing them,
               especially across a clock change. Stays may be up to seven days.
@@ -752,6 +792,18 @@ export function SearchSheet({
           'Departure contingency',
           'Keep checking conditions after the planned departure in case you leave late.',
         )}
+        {timing ? (
+          <View style={{ gap: 4 }} accessibilityLiveRegion="polite">
+            <Text style={s.help}>
+              Stay · {formatted(timing.hours)} h · Departure {localInstantLabel(timing.departure)}
+            </Text>
+            {timing.contingencyEnd ? (
+              <Text style={s.help}>
+                Contingency ends · {localInstantLabel(timing.contingencyEnd)}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
       </FormGroup>
       <FormDisclosure
         title="Depth & seabed"
