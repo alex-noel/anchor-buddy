@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Linking, Pressable, Text, View } from 'react-native';
+import { Keyboard, Linking, Pressable, Text, View } from 'react-native';
 import {
   getPreferredBeddings,
+  CANONICAL_CONVERSIONS,
   validateSearch,
   validateVessel,
   type Assessment,
@@ -46,21 +47,25 @@ const numericKeys = [
   'safetyMarginM',
 ] as const;
 type NumericKey = (typeof numericKeys)[number];
+const feetPerMetre = 1 / CANONICAL_CONVERSIONS.metresPerFoot;
+const kilometresPerNauticalMile = CANONICAL_CONVERSIONS.kilometresPerNauticalMile;
+const statuteMilesPerNauticalMile =
+  CANONICAL_CONVERSIONS.metresPerNauticalMile / CANONICAL_CONVERSIONS.metresPerStatuteMile;
 function numericUnit(key: NumericKey, units: UnitSystem) {
   if (key === 'departureContingencyHours') return { ratio: 1, label: 'hours' };
   if (key === 'maxDistanceNm')
     return units === 'metric'
-      ? { ratio: 1.852, label: 'km' }
+      ? { ratio: kilometresPerNauticalMile, label: 'km' }
       : units === 'imperial'
-        ? { ratio: 1.15078, label: 'mi' }
+        ? { ratio: statuteMilesPerNauticalMile, label: 'mi' }
         : { ratio: 1, label: 'nm' };
   if (['maxWindKnots', 'maxGustKnots', 'maxCurrentKnots'].includes(key))
     return units === 'metric'
-      ? { ratio: 1.852, label: 'km/h' }
+      ? { ratio: kilometresPerNauticalMile, label: 'km/h' }
       : units === 'imperial'
-        ? { ratio: 1.15078, label: 'mph' }
+        ? { ratio: statuteMilesPerNauticalMile, label: 'mph' }
         : { ratio: 1, label: 'kt' };
-  return units === 'imperial' ? { ratio: 3.280839895, label: 'ft' } : { ratio: 1, label: 'm' };
+  return units === 'imperial' ? { ratio: feetPerMetre, label: 'ft' } : { ratio: 1, label: 'm' };
 }
 function formatted(value: number) {
   return String(Number(value.toFixed(2)));
@@ -81,7 +86,10 @@ export function SearchSheet({
   initialAreaConfirmed = false,
 }: {
   search: SearchRequest;
-  onSave: (s: SearchRequest, selection?: { regionName: string; timezone: string }) => void;
+  onSave: (
+    s: SearchRequest,
+    selection?: { regionName: string; timezone: string },
+  ) => void | Promise<void>;
   onClose: () => void;
   pack?: RegionPack;
   offline?: boolean;
@@ -93,6 +101,8 @@ export function SearchSheet({
   initialRegionTimezone?: string;
   initialAreaConfirmed?: boolean;
 }) {
+  const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
   const [values, setValues] = useState<Record<NumericKey, string>>(
     () =>
       Object.fromEntries(
@@ -209,7 +219,8 @@ export function SearchSheet({
     }));
     setError('');
   };
-  const save = () => {
+  const save = async () => {
+    if (saveLock.current) return;
     if (mode === 'search' && !areaConfirmed) {
       setError(
         'Choose a coastal region, find a location, or enter your coordinates before searching.',
@@ -259,352 +270,389 @@ export function SearchSheet({
       setError(readableFormErrors(errors));
       return;
     }
-    onSave(
-      next,
-      selectedArea
-        ? { regionName: selectedArea.regionName, timezone: selectedArea.timezone }
-        : undefined,
-    );
-    onClose();
+    saveLock.current = true;
+    Keyboard.dismiss();
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(
+        next,
+        selectedArea
+          ? { regionName: selectedArea.regionName, timezone: selectedArea.timezone }
+          : undefined,
+      );
+      onClose();
+    } catch (e) {
+      setError('Could not save on this device: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
+    }
   };
   return (
-    <Sheet title={mode === 'defaults' ? 'Search defaults' : 'Plan the stay'} onClose={onClose}>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Chip
-          selected={visitMode === 'overnight'}
-          onPress={() => setVisitMode('overnight')}
-          icon="moon"
-        >
-          Overnight
-        </Chip>
-        <Chip selected={visitMode === 'daytime'} onPress={() => setVisitMode('daytime')} icon="sun">
-          Day stop
-        </Chip>
-      </View>
-      {mode === 'search' ? (
-        <View style={{ gap: 12 }}>
-          <Eyebrow>Search area</Eyebrow>
-          <MapRegionPicker
-            units={units}
-            selectedId={selectedArea?.id}
-            onSelect={(preset) => {
-              setAreaConfirmed(true);
-              setError('');
-              setLat(String(preset.center[1]));
-              setLon(String(preset.center[0]));
-              numericReference.current.maxDistanceNm = preset.radiusNm;
-              setValues((previous) => ({
-                ...previous,
-                maxDistanceNm: formatted(
-                  preset.radiusNm * numericUnit('maxDistanceNm', units).ratio,
-                ),
-              }));
-              setSelectedArea({
-                id: preset.id,
-                regionName: preset.name,
-                timezone: preset.timezone,
-              });
-              setLocationResults([]);
-              setLocationQuery('');
-              setLocationError('');
-              locationRequest.current++;
-              setFindingLocation(false);
-            }}
-          />
-          {selectedArea ? (
-            <Text style={s.help}>Selected area · {selectedArea.regionName}</Text>
-          ) : null}
-          {onFindLocation ? (
-            <View style={{ gap: 10 }}>
-              <Field
-                label="Town, harbour or address"
-                value={locationQuery}
-                onChange={(value) => {
-                  setLocationQuery(value);
-                  setLocationResults([]);
-                  setLocationError('');
-                  locationRequest.current++;
-                  setFindingLocation(false);
-                }}
-                help={
-                  offline
-                    ? 'Location lookup needs a connection. You can still choose a point on the map or enter coordinates.'
-                    : undefined
-                }
-              />
-              <Button
-                secondary
-                small
-                icon="search"
-                disabled={offline || findingLocation || !locationQuery.trim()}
-                onPress={() => void findLocation()}
-              >
-                {findingLocation ? 'Finding locations…' : 'Find location'}
-              </Button>
-              {locationResults.map((match, index) => (
-                <Pressable
-                  key={`${match.name}-${index}`}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Use ${match.name}`}
-                  onPress={() => {
-                    setPosition(match.position);
-                    setLocationQuery(match.name);
+    <Sheet
+      title={mode === 'defaults' ? 'Search defaults' : 'Plan the stay'}
+      onClose={saving ? () => {} : onClose}
+    >
+      {saving ? (
+        <Button disabled onPress={() => {}}>
+          Saving…
+        </Button>
+      ) : null}
+      <View
+        style={{ gap: 20, display: saving ? 'none' : 'flex' }}
+        accessibilityElementsHidden={saving}
+        importantForAccessibility={saving ? 'no-hide-descendants' : 'auto'}
+      >
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Chip
+            selected={visitMode === 'overnight'}
+            onPress={() => setVisitMode('overnight')}
+            icon="moon"
+          >
+            Overnight
+          </Chip>
+          <Chip
+            selected={visitMode === 'daytime'}
+            onPress={() => setVisitMode('daytime')}
+            icon="sun"
+          >
+            Day stop
+          </Chip>
+        </View>
+        {mode === 'search' ? (
+          <View style={{ gap: 12 }}>
+            <Eyebrow>Search area</Eyebrow>
+            <MapRegionPicker
+              units={units}
+              selectedId={selectedArea?.id}
+              onSelect={(preset) => {
+                setAreaConfirmed(true);
+                setError('');
+                setLat(String(preset.center[1]));
+                setLon(String(preset.center[0]));
+                numericReference.current.maxDistanceNm = preset.radiusNm;
+                setValues((previous) => ({
+                  ...previous,
+                  maxDistanceNm: formatted(
+                    preset.radiusNm * numericUnit('maxDistanceNm', units).ratio,
+                  ),
+                }));
+                setSelectedArea({
+                  id: preset.id,
+                  regionName: preset.name,
+                  timezone: preset.timezone,
+                });
+                setLocationResults([]);
+                setLocationQuery('');
+                setLocationError('');
+                locationRequest.current++;
+                setFindingLocation(false);
+              }}
+            />
+            {selectedArea ? (
+              <Text style={s.help}>Selected area · {selectedArea.regionName}</Text>
+            ) : null}
+            {onFindLocation ? (
+              <View style={{ gap: 10 }}>
+                <Field
+                  label="Town, harbour or address"
+                  value={locationQuery}
+                  onChange={(value) => {
+                    setLocationQuery(value);
                     setLocationResults([]);
+                    setLocationError('');
+                    locationRequest.current++;
+                    setFindingLocation(false);
                   }}
+                  help={
+                    offline
+                      ? 'Location lookup needs a connection. You can still choose a point on the map or enter coordinates.'
+                      : undefined
+                  }
+                />
+                <Button
+                  secondary
+                  small
+                  icon="search"
+                  disabled={offline || findingLocation || !locationQuery.trim()}
+                  onPress={() => void findLocation()}
+                >
+                  {findingLocation ? 'Finding locations…' : 'Find location'}
+                </Button>
+                {locationResults.map((match, index) => (
+                  <Pressable
+                    key={`${match.name}-${index}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Use ${match.name}`}
+                    onPress={() => {
+                      setPosition(match.position);
+                      setLocationQuery(match.name);
+                      setLocationResults([]);
+                    }}
+                    style={{
+                      padding: 12,
+                      borderWidth: 1,
+                      borderColor: c.line,
+                      borderRadius: 8,
+                      backgroundColor: c.white,
+                      flexDirection: 'row',
+                      gap: 10,
+                    }}
+                  >
+                    <Icon name="map-pin" size={16} />
+                    <Text style={{ flex: 1, color: c.ink, fontSize: 13, lineHeight: 19 }}>
+                      {match.name}
+                    </Text>
+                  </Pressable>
+                ))}
+                {locationError ? (
+                  <Text style={{ color: c.red, fontSize: 12, lineHeight: 18 }}>
+                    {locationError}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {pack && areaConfirmed && position ? (
+              <>
+                <Text style={s.help}>Tap the map to set the centre. Adjust the radius below.</Text>
+                <View
                   style={{
-                    padding: 12,
+                    height: 270,
+                    borderRadius: 12,
+                    overflow: 'hidden',
                     borderWidth: 1,
                     borderColor: c.line,
-                    borderRadius: 8,
-                    backgroundColor: c.white,
-                    flexDirection: 'row',
-                    gap: 10,
                   }}
                 >
-                  <Icon name="map-pin" size={16} />
-                  <Text style={{ flex: 1, color: c.ink, fontSize: 13, lineHeight: 19 }}>
-                    {match.name}
-                  </Text>
-                </Pressable>
-              ))}
-              {locationError ? (
-                <Text style={{ color: c.red, fontSize: 12, lineHeight: 18 }}>{locationError}</Text>
-              ) : null}
-            </View>
-          ) : null}
-
-          {pack && areaConfirmed && position ? (
-            <>
-              <Text style={s.help}>Tap the map to set the centre. Adjust the radius below.</Text>
-              <View
-                style={{
-                  height: 270,
-                  borderRadius: 12,
-                  overflow: 'hidden',
-                  borderWidth: 1,
-                  borderColor: c.line,
-                }}
-              >
-                <Chart
-                  units={units}
-                  pack={pack}
-                  assessments={emptyAssessments}
-                  origin={position}
-                  onSelect={() => {}}
-                  onPin={setPosition}
-                  onlineBasemap={!offline}
-                  selectOnTap
-                  searchRadiusNm={Number.isFinite(radius) && radius > 0 ? radius : undefined}
-                  initialZoom={12.2}
-                  showBedding={false}
-                  showMarks={false}
+                  <Chart
+                    units={units}
+                    pack={pack}
+                    assessments={emptyAssessments}
+                    origin={position}
+                    onSelect={() => {}}
+                    onPin={setPosition}
+                    onlineBasemap={!offline}
+                    selectOnTap
+                    searchRadiusNm={Number.isFinite(radius) && radius > 0 ? radius : undefined}
+                    initialZoom={12.2}
+                    showBedding={false}
+                    showMarks={false}
+                  />
+                </View>
+              </>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: coordinatesOpen }}
+              onPress={() => setCoordinatesOpen(!coordinatesOpen)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}
+            >
+              <Icon name={coordinatesOpen ? 'chevron-up' : 'chevron-down'} size={16} />
+              <Text style={{ color: c.ink, fontSize: 13 }}>
+                {areaConfirmed && position
+                  ? `Coordinates · ${position[1].toFixed(4)}, ${position[0].toFixed(4)}`
+                  : areaConfirmed
+                    ? 'Complete valid coordinates'
+                    : 'Enter coordinates'}
+              </Text>
+            </Pressable>
+            {coordinatesOpen ? (
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <Field
+                  signed
+                  label="Latitude"
+                  required
+                  help="Decimal degrees, −85 to 85; south is negative."
+                  value={lat}
+                  onChange={(value) => {
+                    setLat(value);
+                    setAreaConfirmed(true);
+                    setError('');
+                    setSelectedArea(undefined);
+                  }}
+                />
+                <Field
+                  signed
+                  label="Longitude"
+                  required
+                  help="Decimal degrees, −180 to 180; west is negative."
+                  value={lon}
+                  onChange={(value) => {
+                    setLon(value);
+                    setAreaConfirmed(true);
+                    setError('');
+                    setSelectedArea(undefined);
+                  }}
                 />
               </View>
-            </>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: coordinatesOpen }}
-            onPress={() => setCoordinatesOpen(!coordinatesOpen)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}
-          >
-            <Icon name={coordinatesOpen ? 'chevron-up' : 'chevron-down'} size={16} />
-            <Text style={{ color: c.ink, fontSize: 13 }}>
-              {areaConfirmed && position
-                ? `Coordinates · ${position[1].toFixed(4)}, ${position[0].toFixed(4)}`
-                : areaConfirmed
-                  ? 'Complete valid coordinates'
-                  : 'Enter coordinates'}
-            </Text>
-          </Pressable>
-          {coordinatesOpen ? (
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <Field
-                signed
-                label="Latitude"
-                required
-                help="Decimal degrees, −85 to 85; south is negative."
-                value={lat}
-                onChange={(value) => {
-                  setLat(value);
-                  setAreaConfirmed(true);
-                  setError('');
-                  setSelectedArea(undefined);
-                }}
-              />
-              <Field
-                signed
-                label="Longitude"
-                required
-                help="Decimal degrees, −180 to 180; west is negative."
-                value={lon}
-                onChange={(value) => {
-                  setLon(value);
-                  setAreaConfirmed(true);
-                  setError('');
-                  setSelectedArea(undefined);
-                }}
-              />
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-      <View style={{ gap: 10 }}>
-        {field(
-          'maxDistanceNm',
-          'Search radius',
-          liveRadius
-            ? 'Straight-line distance from the selected centre. Live sources support 0.25–25 nm (about 0.46–46.3 km). Downloaded or reviewed searches can cover larger areas when evidence is available.'
-            : 'Straight-line distance from the selected centre. This search uses downloaded or reviewed evidence and supports up to 50 nm where coverage exists.',
-        )}
-        {mode === 'search' ? (
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <View style={{ flex: 1 }}>
-              <Button secondary small icon="minus" onPress={() => resizeArea(0.8)}>
-                Smaller area
-              </Button>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Button secondary small icon="plus" onPress={() => resizeArea(1.25)}>
-                Larger area
-              </Button>
-            </View>
+            ) : null}
           </View>
         ) : null}
-      </View>
-      {mode === 'search' ? (
-        <View style={{ gap: 16 }}>
-          <View style={{ gap: 6 }}>
-            <Eyebrow>Stay window</Eyebrow>
-            <Text style={s.help}>Your local time · {timezoneLabel()}</Text>
+        <View style={{ gap: 10 }}>
+          {field(
+            'maxDistanceNm',
+            'Search radius',
+            liveRadius
+              ? 'Straight-line distance from the selected centre. Live sources support 0.25–25 nm (about 0.46–46.3 km). Downloaded or reviewed searches can cover larger areas when evidence is available.'
+              : 'Straight-line distance from the selected centre. This search uses downloaded or reviewed evidence and supports up to 50 nm where coverage exists.',
+          )}
+          {mode === 'search' ? (
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Button secondary small icon="minus" onPress={() => resizeArea(0.8)}>
+                  Smaller area
+                </Button>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Button secondary small icon="plus" onPress={() => resizeArea(1.25)}>
+                  Larger area
+                </Button>
+              </View>
+            </View>
+          ) : null}
+        </View>
+        {mode === 'search' ? (
+          <View style={{ gap: 16 }}>
+            <View style={{ gap: 6 }}>
+              <Eyebrow>Stay window</Eyebrow>
+              <Text style={s.help}>Your local time · {timezoneLabel()}</Text>
+            </View>
+            <LocalDateHourField
+              label="Arrival"
+              value={arrival}
+              onChange={(next) => {
+                setDeparture(moveStayArrival(arrival, departure, next));
+                setArrival(next);
+                setError('');
+              }}
+            />
+            <LocalDateHourField
+              label="Departure"
+              value={departure}
+              onChange={(next) => {
+                setDeparture(next);
+                setError('');
+              }}
+            />
+            <Text style={s.help}>
+              Changing arrival moves departure too. Review both dates after changing them,
+              especially across a clock change. Stays may be up to seven days.
+            </Text>
           </View>
-          <LocalDateHourField
-            label="Arrival"
-            value={arrival}
-            onChange={(next) => {
-              setDeparture(moveStayArrival(arrival, departure, next));
-              setArrival(next);
+        ) : null}
+        {mode === 'defaults' ? (
+          <Field
+            label="Default stay duration"
+            numeric
+            required
+            suffix="hours"
+            value={stayHours}
+            onChange={(value) => {
+              setStayHours(value);
               setError('');
             }}
+            help="1–168 hours. Each new search starts at the next local hour and uses this duration; you can adjust its dates."
           />
-          <LocalDateHourField
-            label="Departure"
-            value={departure}
-            onChange={(next) => {
-              setDeparture(next);
-              setError('');
-            }}
-          />
+        ) : null}
+        {visitMode === 'daytime' ? (
           <Text style={s.help}>
-            Changing arrival moves departure too. Review both dates after changing them, especially
-            across a clock change. Stays may be up to seven days.
+            Day stop does not override the dates: stays over 12 hours or crossing midnight at the
+            destination still require overnight permission.
           </Text>
-        </View>
-      ) : null}
-      {mode === 'defaults' ? (
-        <Field
-          label="Default stay duration"
-          numeric
-          required
-          suffix="hours"
-          value={stayHours}
-          onChange={(value) => {
-            setStayHours(value);
-            setError('');
-          }}
-          help="1–168 hours. Each new search starts at the next local hour and uses this duration; you can adjust its dates."
-        />
-      ) : null}
-      {visitMode === 'daytime' ? (
-        <Text style={s.help}>
-          Day stop does not override the dates: stays over 12 hours or crossing midnight at the
-          destination still require overnight permission.
-        </Text>
-      ) : null}
-      {field(
-        'departureContingencyHours',
-        'Departure contingency',
-        'Keep checking conditions after the planned departure in case you leave late.',
-      )}
-      <View style={{ gap: 16 }}>
-        <Eyebrow>Depth & seabed</Eyebrow>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          {field('preferredMaxDepthM', 'Preferred maximum depth')}
-          {field(
-            'minUnderKeelClearanceM',
-            'Under-keel clearance',
-            'Minimum water below your loaded keel.',
-          )}
-        </View>
-        <SeabedSelect value={bedding} onChange={setBedding} />
+        ) : null}
         {field(
-          'safetyMarginM',
-          'Swing-footprint margin',
-          'Extra space beyond the full vessel and rode footprint.',
+          'departureContingencyHours',
+          'Departure contingency',
+          'Keep checking conditions after the planned departure in case you leave late.',
         )}
-        <Text style={s.help}>
-          If needed, separately labelled +20% and +30% deeper alternatives retain every clearance
-          and equipment check.
-        </Text>
-      </View>
-      <View style={{ gap: 16 }}>
-        <Eyebrow>Operating limits</Eyebrow>
-        <Text style={s.help}>
-          Set limits for your boat, equipment and crew. Starting values are editable planning
-          examples; they are not equipment ratings or a safe-weather guarantee.
-        </Text>
-        <Button
-          small
-          secondary
-          onPress={() => {
-            Object.assign(numericReference.current, startingLimits);
-            setValues((p) => ({
-              ...p,
-              ...Object.fromEntries(
-                Object.entries(startingLimits).map(([key, value]) => [
-                  key,
-                  formatted(value * numericUnit(key as NumericKey, units).ratio),
-                ]),
-              ),
-            }));
-            setError('');
-          }}
-        >
-          Use starting defaults
-        </Button>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          {field('maxWindKnots', 'Sustained wind', 'Maximum forecast steady wind during the stay.')}
+        <View style={{ gap: 16 }}>
+          <Eyebrow>Depth & seabed</Eyebrow>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+            {field('preferredMaxDepthM', 'Preferred maximum depth')}
+            {field(
+              'minUnderKeelClearanceM',
+              'Under-keel clearance',
+              'Minimum water below your loaded keel.',
+            )}
+          </View>
+          <SeabedSelect value={bedding} onChange={setBedding} />
           {field(
-            'maxGustKnots',
-            'Wind gusts',
-            'Maximum brief peak; consider your anchor and windage.',
+            'safetyMarginM',
+            'Swing-footprint margin',
+            'Extra space beyond the full vessel and rode footprint.',
           )}
-        </View>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          {field(
-            'maxWaveM',
-            'Wave height',
-            'Maximum significant wave height or swell. Individual waves may be higher; period and exposure also matter.',
-          )}
-          {field(
-            'maxCurrentKnots',
-            'Current',
-            'Maximum forecast current; allow for reversing flow.',
-          )}
-        </View>
-        <Pressable
-          accessibilityRole="link"
-          onPress={() => void Linking.openURL('https://www.weather.gov/safety/safeboating-marine')}
-        >
-          <Text style={{ color: c.green, fontSize: 12, textDecorationLine: 'underline' }}>
-            NWS marine forecast guidance
+          <Text style={s.help}>
+            If needed, separately labelled +20% and +30% deeper alternatives retain every clearance
+            and equipment check.
           </Text>
-        </Pressable>
+        </View>
+        <View style={{ gap: 16 }}>
+          <Eyebrow>Operating limits</Eyebrow>
+          <Text style={s.help}>
+            Set limits for your boat, equipment and crew. Starting values are editable planning
+            examples; they are not equipment ratings or a safe-weather guarantee.
+          </Text>
+          <Button
+            small
+            secondary
+            onPress={() => {
+              Object.assign(numericReference.current, startingLimits);
+              setValues((p) => ({
+                ...p,
+                ...Object.fromEntries(
+                  Object.entries(startingLimits).map(([key, value]) => [
+                    key,
+                    formatted(value * numericUnit(key as NumericKey, units).ratio),
+                  ]),
+                ),
+              }));
+              setError('');
+            }}
+          >
+            Use starting defaults
+          </Button>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+            {field(
+              'maxWindKnots',
+              'Sustained wind',
+              'Maximum forecast steady wind during the stay.',
+            )}
+            {field(
+              'maxGustKnots',
+              'Wind gusts',
+              'Maximum brief peak; consider your anchor and windage.',
+            )}
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+            {field(
+              'maxWaveM',
+              'Wave height',
+              'Maximum significant wave height or swell. Individual waves may be higher; period and exposure also matter.',
+            )}
+            {field(
+              'maxCurrentKnots',
+              'Current',
+              'Maximum forecast current; allow for reversing flow.',
+            )}
+          </View>
+          <Pressable
+            accessibilityRole="link"
+            onPress={() =>
+              void Linking.openURL('https://www.weather.gov/safety/safeboating-marine')
+            }
+          >
+            <Text style={{ color: c.green, fontSize: 12, textDecorationLine: 'underline' }}>
+              NWS marine forecast guidance
+            </Text>
+          </Pressable>
+        </View>
+        {error ? <Notice tone="warning">{error}</Notice> : null}
+        <Button disabled={saving} onPress={save} icon={mode === 'defaults' ? 'check' : 'search'}>
+          {mode === 'defaults' ? 'Save defaults' : 'Search this area'}
+        </Button>
       </View>
-      {error ? <Notice tone="warning">{error}</Notice> : null}
-      <Button onPress={save} icon={mode === 'defaults' ? 'check' : 'search'}>
-        {mode === 'defaults' ? 'Save defaults' : 'Search this area'}
-      </Button>
     </Sheet>
   );
 }
@@ -640,16 +688,18 @@ export function ProfileSheet({
   units = 'nautical',
 }: {
   vessel: VesselProfile;
-  onSave: (v: VesselProfile) => void;
+  onSave: (v: VesselProfile) => void | Promise<void>;
   onClose: () => void;
   title?: string;
   saveLabel?: string;
   units?: UnitSystem;
 }) {
+  const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
   const [v, setV] = useState(() => JSON.parse(JSON.stringify(vessel)) as VesselProfile);
   const [error, setError] = useState('');
-  const lengthRatio = units === 'imperial' ? 3.280839895 : 1;
-  const massRatio = units === 'imperial' ? 2.20462262 : 1;
+  const lengthRatio = units === 'imperial' ? feetPerMetre : 1;
+  const massRatio = units === 'imperial' ? 1 / CANONICAL_CONVERSIONS.kilogramsPerPound : 1;
   const lengthUnit = units === 'imperial' ? 'ft' : 'm';
   const originalValues: Record<string, number | undefined> = {
     lengthM: vessel.lengthM,
@@ -665,7 +715,8 @@ export function ProfileSheet({
     Object.fromEntries(
       Object.entries(originalValues).map(([key, value]) => [
         key,
-        value === undefined || (value === 0 && vessel.id === 'unconfigured-vessel')
+        value === undefined ||
+        (value === 0 && vessel.id === 'unconfigured-vessel' && key !== 'bowRollerHeightM')
           ? ''
           : formatted(value * ratioFor(key)),
       ]),
@@ -688,11 +739,12 @@ export function ProfileSheet({
   );
   const parsed = (key: string) => {
     const original = originalValues[key];
-    if (original !== undefined && dimensions[key] === formatted(original * ratioFor(key)))
-      return original;
-    return parseInputDecimal(dimensions[key]) / ratioFor(key);
+    return original === undefined
+      ? parseInputDecimal(dimensions[key]) / ratioFor(key)
+      : parseUnitDraft(dimensions[key], original, ratioFor(key));
   };
-  const save = () => {
+  const save = async () => {
+    if (saveLock.current) return;
     const next = profileDraft();
     if (equipmentChanged(vessel, next)) next.anchor.scopeGuidance = null;
     const errors = validateVessel(next);
@@ -700,8 +752,19 @@ export function ProfileSheet({
       setError(readableFormErrors(errors));
       return;
     }
-    onSave(next);
-    onClose();
+    saveLock.current = true;
+    Keyboard.dismiss();
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(next);
+      onClose();
+    } catch (e) {
+      setError('Could not save on this device: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
+    }
   };
   const profileDraft = (): VesselProfile => ({
     ...v,
@@ -721,93 +784,106 @@ export function ProfileSheet({
   });
   const knownType = anchorOptions.some((option) => option.value === v.anchor.type);
   return (
-    <Sheet title={title} onClose={onClose}>
-      <Field
-        label="Vessel name"
-        required
-        value={v.name}
-        onChange={(name) => {
-          setV((p) => ({ ...p, name }));
-          setError('');
-        }}
-      />
-      <SelectField
-        label="Vessel type"
-        help="For a sailing or powered multihull, choose Catamaran or Trimaran so beam and tariff checks use its hull type."
-        value={v.type}
-        options={[
-          { value: 'sailboat', label: 'Sailboat' },
-          { value: 'powerboat', label: 'Powerboat' },
-          { value: 'catamaran', label: 'Catamaran' },
-          { value: 'trimaran', label: 'Trimaran' },
-        ]}
-        onChange={(type) => setV((p) => ({ ...p, type: type as VesselProfile['type'] }))}
-      />
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-        {number('lengthM', 'Length overall')}
-        {number('beamM', 'Beam')}
-      </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-        {number('loadedDraftM', 'Loaded draft', 'Include fuel, water, stores and people.')}
-        {number('displacementKg', 'Displacement')}
-      </View>
-      {number(
-        'airDraftM',
-        'Air draft (optional)',
-        'Height above the waterline, including mast or aerials.',
-      )}
-      <Eyebrow>Anchoring equipment</Eyebrow>
-      <SelectField
-        label="Anchor design"
-        required
-        value={v.anchor.type}
-        options={
-          knownType
-            ? anchorOptions
-            : [
-                ...anchorOptions,
-                {
-                  value: v.anchor.type,
-                  label: v.anchor.type || 'Select your anchor design',
-                  description: v.anchor.type ? 'Previously saved design' : 'Required before saving',
-                },
-              ]
-        }
-        onChange={(type) => setV((p) => ({ ...p, anchor: { ...p.anchor, type } }))}
-        help="Choose the design family. Reviewed guidance must still match your actual anchor and boat."
-      />
-      <SelectField
-        label="Rode configuration"
-        value={v.anchor.rodeType}
-        options={[
-          { value: 'chain', label: 'All chain' },
-          { value: 'mixed', label: 'Chain and rope' },
-          { value: 'rope', label: 'Rope' },
-        ]}
-        onChange={(rodeType) =>
-          setV((p) => ({
-            ...p,
-            anchor: { ...p.anchor, rodeType: rodeType as VesselProfile['anchor']['rodeType'] },
-          }))
-        }
-      />
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+    <Sheet title={title} onClose={saving ? () => {} : onClose}>
+      {saving ? (
+        <Button disabled onPress={() => {}}>
+          Saving…
+        </Button>
+      ) : null}
+      <View
+        style={{ gap: 20, display: saving ? 'none' : 'flex' }}
+        accessibilityElementsHidden={saving}
+        importantForAccessibility={saving ? 'no-hide-descendants' : 'auto'}
+      >
+        <Field
+          label="Vessel name"
+          required
+          value={v.name}
+          onChange={(name) => {
+            setV((p) => ({ ...p, name }));
+            setError('');
+          }}
+        />
+        <SelectField
+          label="Vessel type"
+          help="For a sailing or powered multihull, choose Catamaran or Trimaran so beam and tariff checks use its hull type."
+          value={v.type}
+          options={[
+            { value: 'sailboat', label: 'Sailboat' },
+            { value: 'powerboat', label: 'Powerboat' },
+            { value: 'catamaran', label: 'Catamaran' },
+            { value: 'trimaran', label: 'Trimaran' },
+          ]}
+          onChange={(type) => setV((p) => ({ ...p, type: type as VesselProfile['type'] }))}
+        />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          {number('lengthM', 'Length overall')}
+          {number('beamM', 'Beam')}
+        </View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          {number('loadedDraftM', 'Loaded draft', 'Include fuel, water, stores and people.')}
+          {number('displacementKg', 'Displacement')}
+        </View>
         {number(
-          'usableLengthM',
-          'Usable rode length',
-          'Total deployable chain and rope, excluding any length that cannot be safely let out.',
+          'airDraftM',
+          'Air draft (optional)',
+          'Height above the waterline, including mast or aerials.',
         )}
-        {number('bowRollerHeightM', 'Bow roller above water')}
+        <Eyebrow>Anchoring equipment</Eyebrow>
+        <SelectField
+          label="Anchor design"
+          required
+          value={v.anchor.type}
+          options={
+            knownType
+              ? anchorOptions
+              : [
+                  ...anchorOptions,
+                  {
+                    value: v.anchor.type,
+                    label: v.anchor.type || 'Select your anchor design',
+                    description: v.anchor.type
+                      ? 'Previously saved design'
+                      : 'Required before saving',
+                  },
+                ]
+          }
+          onChange={(type) => setV((p) => ({ ...p, anchor: { ...p.anchor, type } }))}
+          help="Choose the design family. Reviewed guidance must still match your actual anchor and boat."
+        />
+        <SelectField
+          label="Rode configuration"
+          value={v.anchor.rodeType}
+          options={[
+            { value: 'chain', label: 'All chain' },
+            { value: 'mixed', label: 'Chain and rope' },
+            { value: 'rope', label: 'Rope' },
+          ]}
+          onChange={(rodeType) =>
+            setV((p) => ({
+              ...p,
+              anchor: { ...p.anchor, rodeType: rodeType as VesselProfile['anchor']['rodeType'] },
+            }))
+          }
+        />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          {number(
+            'usableLengthM',
+            'Usable rode length',
+            'Total deployable chain and rope, excluding any length that cannot be safely let out.',
+          )}
+          {number('bowRollerHeightM', 'Bow roller above water')}
+        </View>
+        <Text style={s.help}>
+          {equipmentChanged(vessel, profileDraft()) || !vessel.anchor.scopeGuidance
+            ? 'Boat or equipment changes require reviewed scope guidance before anchoring assessments can pass. Choosing a design does not select a safe scope ratio.'
+            : `Current scope guidance: ${vessel.anchor.scopeGuidance.ratio}:1 within its published operating limits. See result evidence for its source and review status.`}
+        </Text>
+        {error ? <Notice tone="warning">{error}</Notice> : null}
+        <Button disabled={saving} icon="check" onPress={save}>
+          {saveLabel}
+        </Button>
       </View>
-      <Text style={s.help}>
-        {equipmentChanged(vessel, profileDraft()) || !vessel.anchor.scopeGuidance
-          ? 'Boat or equipment changes require reviewed scope guidance before anchoring assessments can pass. Choosing a design does not select a safe scope ratio.'
-          : `Current scope guidance: ${vessel.anchor.scopeGuidance.ratio}:1 within its published operating limits. See result evidence for its source and review status.`}
-      </Text>
-      {error ? <Notice tone="warning">{error}</Notice> : null}
-      <Button icon="check" onPress={save}>
-        {saveLabel}
-      </Button>
     </Sheet>
   );
 }

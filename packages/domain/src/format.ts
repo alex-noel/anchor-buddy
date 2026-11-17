@@ -1,16 +1,20 @@
 import type { UnitSystem } from './types.ts';
+import { CANONICAL_CONVERSIONS } from './contracts.ts';
 export function formatDepth(metres: number | null, units: UnitSystem = 'nautical'): string {
   return metres === null
     ? 'Unknown'
     : units === 'imperial'
-      ? `${(metres / 0.3048).toFixed(1)} ft`
+      ? `${(metres / CANONICAL_CONVERSIONS.metresPerFoot).toFixed(1)} ft`
       : `${metres.toFixed(1)} m`;
 }
 export function formatDistance(nauticalMiles: number, units: UnitSystem = 'nautical'): string {
   return units === 'metric'
-    ? `${(nauticalMiles * 1.852).toFixed(1)} km`
+    ? `${(nauticalMiles * CANONICAL_CONVERSIONS.kilometresPerNauticalMile).toFixed(1)} km`
     : units === 'imperial'
-      ? `${(nauticalMiles * 1.15078).toFixed(1)} mi`
+      ? `${(
+          nauticalMiles *
+          (CANONICAL_CONVERSIONS.metresPerNauticalMile / CANONICAL_CONVERSIONS.metresPerStatuteMile)
+        ).toFixed(1)} mi`
       : `${nauticalMiles.toFixed(1)} nm`;
 }
 export function formatPrice(total: number | null, currency: string | null): string {

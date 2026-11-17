@@ -575,6 +575,7 @@ export const CANONICAL_CONVERSIONS = Object.freeze({
   metresPerNauticalMile: 1852,
   metresPerStatuteMile: 1609.344,
   kilometresPerNauticalMile: 1.852,
+  kilogramsPerPound: 0.45359237,
 });
 export const unitConversionTolerance = (expected: number) =>
   Math.max(1e-9, Math.abs(expected) * 1e-12);

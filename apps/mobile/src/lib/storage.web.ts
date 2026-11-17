@@ -1,5 +1,8 @@
 // Web is a development preview. Native builds use SQLite, not browser storage.
 // Preserve the original storage prefix so existing profiles and saved searches remain available.
+export async function getLocalRaw(key: string): Promise<string | null> {
+  return globalThis.localStorage?.getItem(`anchorai:v1:${key}`) ?? null;
+}
 export async function getLocal<T>(key: string): Promise<T | null> {
   const value = globalThis.localStorage?.getItem(`anchorai:v1:${key}`);
   if (!value) return null;

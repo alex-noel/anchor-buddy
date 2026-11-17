@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { CANONICAL_CONVERSIONS, unitConversionTolerance } from '@anchor-buddy/domain';
 import {
   convertRadiusDraft,
   createRadiusDraft,
@@ -34,6 +35,17 @@ test('edited radius drafts accept comma decimals and preserve invalid drafts for
     () => areaBounds([16.4, 43.45], readRadiusDraft({ ...metric, text: '100' })),
     /radius/,
   );
+});
+
+test('edited radius converts once and survives repeated unit toggles within frozen tolerance', () => {
+  const editedMetric = { ...createRadiusDraft(3, 'metric'), text: '6' };
+  const expectedNm = 6 / CANONICAL_CONVERSIONS.kilometresPerNauticalMile;
+  const imperial = convertRadiusDraft(editedMetric, 'imperial');
+  const backToNautical = convertRadiusDraft(imperial, 'nautical');
+  const throughMetricAgain = convertRadiusDraft(backToNautical, 'metric');
+  for (const draft of [editedMetric, imperial, backToNautical, throughMetricAgain]) {
+    assert.ok(Math.abs(readRadiusDraft(draft) - expectedNm) <= unitConversionTolerance(expectedNm));
+  }
 });
 
 test('evidence downloads keep within the actual discovery radius limits', () => {

@@ -16,6 +16,7 @@ import { Button, Card, Check, Eyebrow, Field, Notice } from '../components/ui';
 import { StatusBadge } from '../components/ResultCard';
 import { colors as c } from '../theme';
 import { depth } from '../lib/units';
+import { validateCapturedPosition } from '../lib/positionCapture';
 import Chart from '../components/Chart';
 import {
   parseInputDecimal,
@@ -89,21 +90,7 @@ export default function PlannerScreen({
         );
       const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
       if (request !== locationRequest.current) return;
-      const { latitude, longitude, accuracy } = fix.coords;
-      const age = Date.now() - fix.timestamp;
-      if (!Number.isFinite(fix.timestamp) || age < -5000 || age > 15_000)
-        throw new Error('The location is not recent enough. Try again for a fresh position.');
-      if (
-        !Number.isFinite(latitude) ||
-        !Number.isFinite(longitude) ||
-        Math.abs(latitude) > 85 ||
-        Math.abs(longitude) > 180
-      )
-        throw new Error(
-          'The location is invalid or outside supported map coverage. Choose a position within 85° north or south.',
-        );
-      if (accuracy === null || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 15)
-        throw new Error('Wait for a position accuracy of 15 metres or better, then try again.');
+      const [longitude, latitude] = validateCapturedPosition(fix, Date.now(), 85);
       setLat(String(latitude));
       setLon(String(longitude));
       setChecks([false, false, false, false]);

@@ -1,4 +1,4 @@
-import type { RegionPack, UnitSystem } from '@anchor-buddy/domain';
+import { CANONICAL_CONVERSIONS, type RegionPack, type UnitSystem } from '@anchor-buddy/domain';
 import { parseInputDecimal } from './inputNumbers';
 
 export interface RadiusDraft {
@@ -7,7 +7,11 @@ export interface RadiusDraft {
   referenceNm?: number;
 }
 const ratio = (units: UnitSystem) =>
-  units === 'metric' ? 1.852 : units === 'imperial' ? 1.15078 : 1;
+  units === 'metric'
+    ? CANONICAL_CONVERSIONS.kilometresPerNauticalMile
+    : units === 'imperial'
+      ? CANONICAL_CONVERSIONS.metresPerNauticalMile / CANONICAL_CONVERSIONS.metresPerStatuteMile
+      : 1;
 export const radiusInputUnit = (units: UnitSystem) =>
   units === 'metric' ? 'km' : units === 'imperial' ? 'mi' : 'nm';
 export function createRadiusDraft(nauticalMiles: number, units: UnitSystem): RadiusDraft {

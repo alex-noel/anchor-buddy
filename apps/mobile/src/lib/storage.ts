@@ -7,6 +7,12 @@ const database = (async () => {
   );
   return db;
 })();
+export async function getLocalRaw(key: string): Promise<string | null> {
+  const row = await (
+    await database
+  ).getFirstAsync<{ value: string }>('SELECT value FROM local_state WHERE key = ?', key);
+  return row?.value ?? null;
+}
 export async function getLocal<T>(key: string): Promise<T | null> {
   const row = await (
     await database

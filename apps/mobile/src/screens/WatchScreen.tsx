@@ -8,6 +8,7 @@ import { Button, Card, Check, Eyebrow, Field, Icon, Notice } from '../components
 import { colors as c } from '../theme';
 import { depth } from '../lib/units';
 import { setLocal } from '../lib/storage';
+import { createPositionCapture } from '../lib/positionCapture';
 import {
   parseInputDecimal,
   createLengthDraft,
@@ -64,6 +65,13 @@ export default function WatchScreen({
   const lastSaved = useRef('');
   const inFlight = useRef(false);
   const snapshotEpoch = useRef(0);
+  const [positionCapture] = useState(createPositionCapture);
+  const [findingPosition, setFindingPosition] = useState(false);
+  useEffect(() => () => positionCapture.cancel(), [positionCapture]);
+  const cancelCapture = () => {
+    positionCapture.cancel();
+    setFindingPosition(false);
+  };
 
   const resetConfirmations = useCallback(() => {
     setAnchorConfirmed(false);
@@ -75,6 +83,10 @@ export default function WatchScreen({
   }, []);
   const accept = useCallback(
     (next: Watch.WatchStatus) => {
+      if (activeStates.has(next.state)) {
+        positionCapture.cancel();
+        setFindingPosition(false);
+      }
       snapshotEpoch.current++;
       const before = previous.current;
       if (
@@ -103,7 +115,7 @@ export default function WatchScreen({
         void setLocal('last-watch', next).catch(() => {});
       }
     },
-    [resetConfirmations, units],
+    [resetConfirmations, units, positionCapture],
   );
 
   useEffect(() => {
@@ -162,21 +174,25 @@ export default function WatchScreen({
       setBusy(false);
     }
   };
-  const capture = () =>
-    run(async () => {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted')
-        throw new Error('Location permission is required to capture the anchor position.');
-      const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
-      if ((fix.coords.accuracy ?? Infinity) > 15 || Date.now() - fix.timestamp > 15_000) {
-        throw new Error(
-          'A recent position accurate to 15 m or better is required. Wait for a better fix or enter a verified anchor position.',
-        );
-      }
-      setLatitude(fix.coords.latitude.toFixed(6));
-      setLongitude(fix.coords.longitude.toFixed(6));
-      setAnchorConfirmed(false);
+  const capture = async () => {
+    if (busy || findingPosition || (status && activeStates.has(status.state))) return;
+    setFindingPosition(true);
+    setError('');
+    const result = await positionCapture.capture({
+      requestPermission: async () => (await Location.requestForegroundPermissionsAsync()).granted,
+      getFix: () => Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }),
+      maxLatitude: 90,
     });
+    if (result.kind === 'cancelled') return;
+    setFindingPosition(false);
+    if (result.kind === 'error') {
+      setError(result.message);
+      return;
+    }
+    setLatitude(String(result.position[1]));
+    setLongitude(String(result.position[0]));
+    setAnchorConfirmed(false);
+  };
   const armed = status !== null && activeStates.has(status.state);
   const hasAlarm = Boolean(status?.alerts.some((alert) => !alert.acknowledged));
   const statusIsCurrent = verified && clock - lastContact.current < 12_000;
@@ -442,6 +458,7 @@ export default function WatchScreen({
               label="Anchor latitude"
               value={latitude}
               onChange={(value) => {
+                cancelCapture();
                 setLatitude(value);
                 setAnchorConfirmed(false);
               }}
@@ -451,6 +468,7 @@ export default function WatchScreen({
               label="Anchor longitude"
               value={longitude}
               onChange={(value) => {
+                cancelCapture();
                 setLongitude(value);
                 setAnchorConfirmed(false);
               }}
@@ -459,11 +477,16 @@ export default function WatchScreen({
           <Button
             secondary
             icon="crosshair"
-            disabled={busy || !status?.nativeAvailable}
-            onPress={capture}
+            disabled={busy || findingPosition || !status?.nativeAvailable}
+            onPress={() => void capture()}
           >
-            Capture position at anchor drop
+            {findingPosition ? 'Getting a current position…' : 'Capture position at anchor drop'}
           </Button>
+          {findingPosition ? (
+            <Button secondary onPress={cancelCapture}>
+              Cancel position capture
+            </Button>
+          ) : null}
           <Field
             label="Alarm radius"
             value={radiusText}
@@ -543,6 +566,7 @@ export default function WatchScreen({
             icon="radio"
             disabled={
               busy ||
+              findingPosition ||
               !status?.nativeAvailable ||
               !statusIsCurrent ||
               !anchorConfirmed ||

@@ -46,7 +46,13 @@ import PlannerScreen from './screens/PlannerScreen';
 import WatchScreen from './screens/WatchScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import SavedScreen from './screens/SavedScreen';
-import { getLocal, setLocal, removeLocal } from './lib/storage';
+import { getLocal, getLocalRaw, setLocal, removeLocal } from './lib/storage';
+import { createSettingsRepository } from './lib/settingsPersistence';
+const settingsRepository = createSettingsRepository({
+  get: getLocal,
+  getRaw: getLocalRaw,
+  set: setLocal,
+});
 import { discoverRegion, findLocations } from './lib/regionalData';
 import { useConnectivity } from './lib/useConnectivity';
 import { useEvidenceRefresh } from './lib/useEvidenceRefresh';
@@ -211,26 +217,12 @@ function AnchorApp() {
     let live = true;
     void (async () => {
       try {
-        const [
-          region,
-          boat,
-          prefs,
-          searchPrefs,
-          legacySearch,
-          searches,
-          setup,
-          evidence,
-          profileConfirmed,
-        ] = await Promise.all([
+        const [region, settings, searches, setup, evidence] = await Promise.all([
           getLocal<{ pack: RegionPack; savedAt: string }>('active-region'),
-          getLocal<VesselProfile>('vessel'),
-          getLocal<{ units: UnitSystem; offline: boolean; layers?: MapLayers }>('preferences'),
-          getLocal<SearchRequest>('search-defaults'),
-          getLocal<SearchRequest>('search'),
+          settingsRepository.read(),
           getLocal<unknown>('saved-searches'),
           getLocal<boolean>('setup-complete-v2'),
           getLocal<unknown>('regional-evidence-v1'),
-          getLocal<boolean>('profile-confirmed-v3'),
         ]);
         if (!live) return;
         const cached = readRegionCache(evidence);
@@ -240,7 +232,10 @@ function AnchorApp() {
           setSavedAt(region.savedAt);
           setRegionData(cached.find((row) => row.pack.id === region.pack.id) ?? null);
         }
-        setVesselConfigured(profileConfirmed === true && !!boat && !validateVessel(boat).length);
+        if (settings.status !== 'supported') throw new Error(settings.error);
+        const { vessel: boat, searchDefaults: nextDefaults, confirmed } = settings.value;
+        const prefs = settings.value;
+        setVesselConfigured(confirmed.vessel);
         if (boat && !validateVessel(boat).length) {
           setVessel({
             ...boat,
@@ -265,17 +260,16 @@ function AnchorApp() {
           )
             setLayers(prefs.layers);
         }
-        const nextDefaults = searchPrefs ?? legacySearch;
         if (nextDefaults && !validateSearch(nextDefaults).length)
           setDefaults({
             ...nextDefaults,
             preferredBeddings: getPreferredBeddings(nextDefaults),
             preferredBedding: undefined,
           });
-        setDefaultsConfigured(!!nextDefaults && !validateSearch(nextDefaults).length);
+        setDefaultsConfigured(confirmed.defaults);
         setSaved(readSavedSearches(searches));
         setSetupOpen(
-          setup !== true || profileConfirmed !== true || !boat || validateVessel(boat).length > 0,
+          setup !== true || !confirmed.vessel || !boat || validateVessel(boat).length > 0,
         );
       } catch (error) {
         if (live) {
@@ -437,7 +431,12 @@ function AnchorApp() {
     setUnits(u);
     setOffline(o);
     setLayers(l);
-    void persist('preferences', { units: u, offline: o, layers: l, language: 'en' });
+    void settingsRepository
+      .commit({ units: u, offline: o, layers: l, language: 'en' })
+      .then((result) => {
+        if (result.status === 'failed')
+          setMessage('Could not save on this device: ' + result.error);
+      });
   };
   const requireVessel = () => {
     if (vesselReady) return true;
@@ -696,17 +695,25 @@ function AnchorApp() {
         );
       }
     })().catch(notifyError);
-  const saveVessel = (next: VesselProfile) => {
+  const saveVessel = async (next: VesselProfile) => {
+    const result = await settingsRepository.commit((current) => ({
+      vessel: next,
+      confirmed: { ...current.confirmed, vessel: true },
+    }));
+    if (result.status === 'failed') throw new Error(result.error);
     setVessel(next);
     setVesselConfigured(true);
     setAssessedAt(new Date().toISOString());
     dispatch({ type: 'commitProfile' });
-    void persist('vessel', next);
   };
-  const saveDefaults = (next: SearchRequest) => {
+  const saveDefaults = async (next: SearchRequest) => {
+    const result = await settingsRepository.commit((current) => ({
+      searchDefaults: next,
+      confirmed: { ...current.confirmed, defaults: true },
+    }));
+    if (result.status === 'failed') throw new Error(result.error);
     setDefaults(next);
     setDefaultsConfigured(true);
-    void persist('search-defaults', next);
   };
   const savePack = async () => {
     if (!pack.sources.length)
@@ -838,10 +845,16 @@ function AnchorApp() {
     setSetupSaving(true);
     setSetupError('');
     try {
-      await setLocal('vessel', vessel);
-      await setLocal('search-defaults', defaults);
-      await setLocal('preferences', { units, offline: offlinePreference, layers, language: 'en' });
-      await setLocal('profile-confirmed-v3', true);
+      const result = await settingsRepository.commit({
+        vessel,
+        searchDefaults: defaults,
+        units,
+        offline: offlinePreference,
+        layers,
+        language: 'en',
+        confirmed: { vessel: true, defaults: true },
+      });
+      if (result.status === 'failed') throw new Error(result.error);
       await setLocal('setup-complete-v2', true);
       setSetupOpen(false);
       setReviewingSetup(false);
@@ -1571,11 +1584,11 @@ function AnchorApp() {
               });
               setAssessedAt(new Date().toISOString());
             } else
-              saveDefaults({
+              void saveDefaults({
                 ...defaults,
                 preferredBeddings: bedding,
                 preferredBedding: undefined,
-              });
+              }).catch(notifyError);
           }}
           onClose={() => setAdvancedOpen(false)}
         />
