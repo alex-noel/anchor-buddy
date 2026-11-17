@@ -13,7 +13,8 @@
     "android": "expo run:android",
     "export:web": "expo export --platform web",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/lib/*.test.ts ../../scripts/web-offline.test.mjs"
+    "test": "node --import tsx --test src/lib/*.test.ts ../../scripts/web-offline.test.mjs",
+    "test:e2e": "playwright test --config=e2e/playwright.config.ts"
   },
   "dependencies": {
     "@anchor-buddy/anchor-watch": "*",
@@ -42,6 +43,7 @@
     "react-native-web": "~0.21.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "@types/react": "~19.2.0"
   },
   "expo": {
