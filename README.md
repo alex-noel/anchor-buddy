@@ -6,6 +6,8 @@ Anchor Buddy is a React Native anchoring planner for iOS and Android, with a bro
 
 New boat profiles start blank. Profiles saved by older builds must be checked and confirmed; any demonstration scope guidance is removed. Older search snapshots without provenance keep their search preferences but hide historical result values until reassessed.
 
+The [17 November quality pass](docs/validation/quality-acceptance-2026-11-17.md) adds recoverable setup and saves, named anchor-plan drafts, clearer evidence and forecast states, keyboard-accessible forms, responsive map/list layouts and verified browser offline recovery. Drafts restore proposed inputs for reassessment; arrival confirmations and watch state are never restored. The [40-task execution record](docs/plans/2026-11-17-app-quality/EXECUTION.md) tracks implementation separately from native and external acceptance.
+
 ## What is implemented
 
 | Area                      | Delivered behavior                                                                                                                                                                                                 | Release limitation                                                                                                                                      |
@@ -22,7 +24,7 @@ Booking, payments and turn-by-turn navigation are outside this implementation. S
 
 ## Run the development preview
 
-Use Node.js 24 and npm. Python 3.11+ is required for ingestion tests. Run from the repository root. Core features and public-data development requests need no user account, database or API credentials.
+Use Node.js 24.22.3 or a later patched 24.x release and npm. Python 3.11+ is required for ingestion tests. Run from the repository root. Core features and public-data development requests need no user account, database or API credentials.
 
 Install dependencies once, then start the API:
 
@@ -90,7 +92,9 @@ The implementation environment had Xcode Command Line Tools but no full Xcode/iO
 
 ## Backend containers and regional data
 
-The local stack includes the API, PostgreSQL/PostGIS and an operator ingestion image. Set a local development database password, then run:
+The local stack includes the API, PostgreSQL/PostGIS and an operator ingestion image. Follow the database migration instructions before starting the updated stack with existing data. [Database migration](infra/README.md#migrate-an-existing-compose-database)
+
+For a fresh local database, set a development password and start Compose.
 
 ```sh
 export POSTGRES_PASSWORD='replace-with-a-local-development-password'
@@ -119,7 +123,11 @@ npm audit
 
 Web and iOS/Android JavaScript/Hermes exports, Swift syntax parsing and Expo autolinking have been exercised during development. These checks do not establish native binary compilation or real device monitoring. Record fresh test results for each change rather than treating a past test count as release evidence. The walkthrough above covers the current app flow; native overnight/device acceptance remains outstanding.
 
-During the initial implementation on **2026-10-30**, the dependency audit reported advisories in transitive **zod** and **deepmerge** dependencies, and no compatible patched resolution was identified then. This historical result is not a current security assessment. Rerun `npm audit`, reassess reachable dependency paths and use supported remediation before distribution; do not force incompatible overrides merely to suppress audit output.
+The **2026-11-23** full and production-only npm audits reported zero known vulnerabilities. The lockfile resolves `minimatch` 11.0.9 through an override while Expo's fingerprint tool still requests the affected 10.x release line. The GitHub workflow audits the lockfile for moderate and higher findings. [minimatch advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+
+The web export is a static Expo application. Its installed dependency tree does not include the React Server Components packages affected by CVE-2026-126187. [React security advisory](https://github.com/react/react/security/advisories/GHSA-xqc2-xf4c-x3h3)
+
+Existing Compose databases require a logical restore into the updated PostGIS image. See the [migration instructions](infra/README.md#migrate-an-existing-compose-database).
 
 ## AI, privacy and project map
 

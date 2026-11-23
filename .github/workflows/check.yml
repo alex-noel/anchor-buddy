@@ -10,8 +10,24 @@ concurrency:
   cancel-in-progress: true
 env:
   NODE_VERSION: '24.22.3'
-  PYTHON_VERSION: '3.12'
+  NPM_VERSION: '11.21.3'
+  PYTHON_VERSION: '3.12.16'
 jobs:
+  dependency-audit:
+    name: npm dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - run: npm install --global "npm@$NPM_VERSION" --ignore-scripts --no-audit --no-fund
+      - run: npm audit --package-lock-only --include=dev --audit-level=moderate --fetch-retries=1 --fetch-timeout=30000
+
   check:
     name: Deterministic tests and runtime boundary
     runs-on: ubuntu-24.04
@@ -25,12 +41,13 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: package-lock.json
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - run: npm install --global "npm@$NPM_VERSION" --ignore-scripts --no-audit --no-fund
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - id: verify
         run: node scripts/ci/verify.mjs checks
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
         with:
           name: deterministic-${{ github.sha }}
@@ -52,9 +69,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: package-lock.json
+      - run: npm install --global "npm@$NPM_VERSION" --ignore-scripts --no-audit --no-fund
       - id: verify
         run: node scripts/ci/verify.mjs web
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
         with:
           name: web-${{ github.sha }}
@@ -80,11 +98,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: package-lock.json
+      - run: npm install --global "npm@$NPM_VERSION" --ignore-scripts --no-audit --no-fund
       - id: verify
         env:
           TARGET: ${{ matrix.platform }}-js
         run: node scripts/ci/verify.mjs "$TARGET"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
         with:
           name: ${{ matrix.platform }}-hermes-${{ github.sha }}

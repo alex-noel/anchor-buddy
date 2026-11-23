@@ -1,33 +1,35 @@
-import type { UnitSystem } from '@anchor-buddy/domain';
+import {
+  CANONICAL_CONVERSIONS,
+  formatPrice,
+  type FeeStatus,
+  type UnitSystem,
+} from '@anchor-buddy/domain';
+
+const feetPerMetre = 1 / CANONICAL_CONVERSIONS.metresPerFoot;
+const kilometresPerNauticalMile = CANONICAL_CONVERSIONS.kilometresPerNauticalMile;
+const statuteMilesPerNauticalMile =
+  CANONICAL_CONVERSIONS.metresPerNauticalMile / CANONICAL_CONVERSIONS.metresPerStatuteMile;
 export function depth(m: number | null | undefined, units: UnitSystem = 'nautical') {
   if (m == null || !Number.isFinite(m)) return 'Unknown';
-  return units === 'imperial' ? `${(m * 3.28084).toFixed(1)} ft` : `${m.toFixed(1)} m`;
+  return units === 'imperial' ? `${(m * feetPerMetre).toFixed(1)} ft` : `${m.toFixed(1)} m`;
 }
 export function distance(nm: number, units: UnitSystem = 'nautical') {
   return units === 'metric'
-    ? `${(nm * 1.852).toFixed(1)} km`
+    ? `${(nm * kilometresPerNauticalMile).toFixed(1)} km`
     : units === 'imperial'
-      ? `${(nm * 1.15078).toFixed(1)} mi`
+      ? `${(nm * statuteMilesPerNauticalMile).toFixed(1)} mi`
       : `${nm.toFixed(1)} nm`;
 }
 export function wind(knots: number | null, units: UnitSystem = 'nautical', precision = 0) {
   if (knots === null) return 'Unknown';
   return units === 'metric'
-    ? `${(knots * 1.852).toFixed(precision)} km/h`
+    ? `${(knots * kilometresPerNauticalMile).toFixed(precision)} km/h`
     : units === 'imperial'
-      ? `${(knots * 1.15078).toFixed(precision)} mph`
+      ? `${(knots * statuteMilesPerNauticalMile).toFixed(precision)} mph`
       : `${knots.toFixed(precision)} kt`;
 }
-export function money(amount: number | null, currency: string | null = 'USD') {
-  return amount === null
-    ? 'Price unknown'
-    : amount === 0
-      ? 'Free'
-      : new Intl.NumberFormat('en-US', {
-          style: 'currency',
-          currency: currency || 'USD',
-          maximumFractionDigits: 2,
-        }).format(amount);
+export function money(amount: number | null, currency?: string | null, status?: FeeStatus) {
+  return formatPrice(amount, currency, status);
 }
 export function direction(deg: number | null) {
   return deg == null ? '—' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(deg / 45) % 8];

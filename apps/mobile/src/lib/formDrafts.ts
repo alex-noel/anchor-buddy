@@ -61,7 +61,12 @@ export function equipmentChanged(previous: VesselProfile, next: VesselProfile): 
   );
 }
 
-const fieldNames: Record<string, string> = {
+export const formFieldNames = {
+  maxDistanceNm: 'radius',
+  departureContingencyHours: 'departure contingency',
+  airDraftM: 'air draft',
+  usableLengthM: 'usable rode length',
+  bowRollerHeightM: 'bow roller height',
   lengthM: 'length overall',
   beamM: 'beam',
   loadedDraftM: 'loaded draft',
@@ -73,9 +78,41 @@ const fieldNames: Record<string, string> = {
   maxWaveM: 'wave-height limit',
   maxCurrentKnots: 'current limit',
   safetyMarginM: 'swing-footprint margin',
-};
+} as const;
+export type FormFieldKey = keyof typeof formFieldNames;
+
+function fieldKeysInError(error: string): FormFieldKey[] {
+  return (Object.keys(formFieldNames) as FormFieldKey[]).filter((key) =>
+    new RegExp(`\\b${key}\\b`).test(error),
+  );
+}
+
+function replaceFieldTokens(error: string): string {
+  return error.replace(
+    /\b[a-zA-Z][a-zA-Z0-9]*(?:M|Kg|Knots|Nm|Hours)\b/g,
+    (key) => formFieldNames[key as FormFieldKey] ?? key,
+  );
+}
+
+/** Split recognized field errors from the summary without losing unknown messages. */
+export function partitionFormErrors(errors: string[]): {
+  fields: Partial<Record<FormFieldKey, string[]>>;
+  summary: string[];
+} {
+  const fields: Partial<Record<FormFieldKey, string[]>> = {};
+  const summary: string[] = [];
+  for (const error of errors) {
+    const keys = fieldKeysInError(error);
+    if (!keys.length) {
+      summary.push(replaceFieldTokens(error));
+      continue;
+    }
+    const readable = replaceFieldTokens(error);
+    for (const key of keys) fields[key] = [...(fields[key] ?? []), readable];
+  }
+  return { fields, summary };
+}
+
 export function readableFormErrors(errors: string[]): string {
-  return errors
-    .map((error) => error.replace(/\b[a-zA-Z]+(?:M|Kg|Knots)\b/g, (key) => fieldNames[key] ?? key))
-    .join(' ');
+  return errors.map(replaceFieldTokens).join(' ');
 }

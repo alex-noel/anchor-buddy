@@ -4,6 +4,8 @@ No public nautical release is certified by this repository. Runtime data comes f
 
 Record the exact source snapshot, commit/build identifier, reviewer, date, device/OS and outcome for each applicable gate. Store release evidence separately from isolated test fixtures. Do not mark a gate complete solely because a configuration field accepts `true`.
 
+The [17 November app-quality acceptance record](validation/quality-acceptance-2026-11-17.md) records completed local/browser checks and the remaining native gates. Browser setup, save/reload, layout and offline recovery evidence does not close the native/device or maritime requirements below.
+
 ## Regional evidence and maritime review
 
 - [ ] Select actual Florida Keys ENC cells, verify exchange-set hashes, editions and complete update sequences, and retain catalog/source provenance.
@@ -45,7 +47,7 @@ Record the exact source snapshot, commit/build identifier, reviewer, date, devic
 ## Deployment, dependencies and operations
 
 - [ ] Run `npm run check`, web export, platform builds and physical-device acceptance against the release commit; retain results. Repeat checks after changes affecting their coverage.
-- [ ] Reassess `npm audit`. Implementation-time audit reports transitive **zod** and **deepmerge** advisories, with no compatible patched resolution identified in the current dependency set. Determine reachable impact and an appropriate supported upgrade/remediation before distribution; do not describe the dependency tree as security-clean.
+- [ ] Remediate/reassess the **2026-11-17** dependency audit: four moderate findings through minimatch, @expo/fingerprint, expo and @maplibre/maplibre-react-native; zero high/critical in that response. npm proposed major-version downgrades, which were not applied. Determine reachable impact and supported remediation before distribution. Older zod/deepmerge findings dated 2026-10-30 are historical, not the current audit result.
 - [ ] Build/run the API, PostGIS and ingestion containers in the target environment; validate schema initialization, pack mounting, least-privilege credentials and version-scoped database imports. Local Compose files are not proof of deployed operation.
 - [ ] Configure HTTPS ingress, request/rate/resource limits, trusted origins, operator publication authentication, credential handling, backups/restores, immutable/versioned object storage and deployment rollback.
 - [ ] Establish source-refresh and expiry monitoring, provider outage behavior, ingestion failure alerts and responsible ownership for notices/rules/tariffs. Retain provenance and prevent stale data from being served as fresh.

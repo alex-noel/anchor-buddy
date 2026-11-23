@@ -1,9 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDefaultSearch, createVesselDraft } from '@anchor-buddy/domain';
+import {
+  CANONICAL_CONVERSIONS,
+  createDefaultSearch,
+  createVesselDraft,
+  unitConversionTolerance,
+} from '@anchor-buddy/domain';
 import {
   equipmentChanged,
   moveStayArrival,
+  partitionFormErrors,
   parseUnitDraft,
   readCoordinateDraft,
   withDefaultStayDuration,
@@ -81,11 +87,46 @@ test('boat dimensions and equipment edits invalidate previously reviewed guidanc
   );
 });
 
-test('rounded unit controls preserve exact thresholds and programmatic radius limits', () => {
-  assert.equal(parseUnitDraft('28.77', 25, 1.15078), 25);
-  assert.equal(parseUnitDraft('1.64', 0.5, 3.280839895), 0.5);
-  assert.equal(parseUnitDraft('28', 25, 1.15078), 28 / 1.15078);
-  assert.ok(Number.isNaN(parseUnitDraft('', 25, 1.15078)));
+test('unit drafts use exact factors, retain untouched values, and convert edits once', () => {
+  const milesPerNauticalMile =
+    CANONICAL_CONVERSIONS.metresPerNauticalMile / CANONICAL_CONVERSIONS.metresPerStatuteMile;
+  const feetPerMetre = 1 / CANONICAL_CONVERSIONS.metresPerFoot;
+  const poundsPerKilogram = 1 / CANONICAL_CONVERSIONS.kilogramsPerPound;
+  assert.equal(parseUnitDraft('28.77', 25, milesPerNauticalMile), 25);
+  assert.equal(parseUnitDraft('1.64', 0.5, feetPerMetre), 0.5);
+  assert.equal(parseUnitDraft('0', 0, feetPerMetre), 0);
+  assert.equal(
+    parseUnitDraft(String(Number((100 * poundsPerKilogram).toFixed(2))), 100, poundsPerKilogram),
+    100,
+  );
+  assert.ok(Number.isNaN(parseUnitDraft('', 25, milesPerNauticalMile)));
+
+  const expectedNm = 29 / milesPerNauticalMile;
+  let reference = parseUnitDraft('29', 25, milesPerNauticalMile);
+  assert.ok(Math.abs(reference - expectedNm) <= unitConversionTolerance(expectedNm));
+  const editedKilograms = 220 / poundsPerKilogram;
+  assert.ok(
+    Math.abs(editedKilograms - 220 * CANONICAL_CONVERSIONS.kilogramsPerPound) <=
+      unitConversionTolerance(editedKilograms),
+  );
+  for (const ratio of [CANONICAL_CONVERSIONS.kilometresPerNauticalMile, feetPerMetre, 1]) {
+    const display = String(Number((reference * ratio).toFixed(2)));
+    reference = parseUnitDraft(display, reference, ratio);
+    assert.ok(Math.abs(reference - expectedNm) <= unitConversionTolerance(expectedNm));
+  }
+});
+
+test('validation errors map known field tokens and retain unrecognized messages in the summary', () => {
+  const split = partitionFormErrors([
+    'Search maxDistanceNm must be between 0.01 and 50 nautical miles.',
+    'Vessel loadedDraftM must be positive.',
+    'Unrecognized validation detail should remain visible.',
+  ]);
+  assert.deepEqual(split.fields.maxDistanceNm, [
+    'Search radius must be between 0.01 and 50 nautical miles.',
+  ]);
+  assert.deepEqual(split.fields.loadedDraftM, ['Vessel loaded draft must be positive.']);
+  assert.deepEqual(split.summary, ['Unrecognized validation detail should remain visible.']);
 });
 
 test('moving arrival across a half-hour clock change rounds departure up instead of shortening the stay', () => {

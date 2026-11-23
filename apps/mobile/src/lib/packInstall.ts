@@ -40,6 +40,8 @@ export interface InstallIO {
   commit: (pack: RegionPack, manifest: Manifest) => Promise<void>;
   rollback?: () => Promise<void>;
   progress?: (completed: number, total: number) => void;
+  /** Throws on accepted pre-commit cancellation. */
+  check?: () => void;
 }
 export function validSegment(value: unknown): value is string {
   return (
@@ -253,12 +255,20 @@ export async function installPack(
   let pack: RegionPack | undefined;
   let completed = 0;
   try {
+    io.check?.();
     validateManifest(manifest, expected);
     await io.assertReplacementAllowed?.();
+    io.check?.();
     for (const asset of manifest.assets) {
+      io.check?.();
       const bytes = await io.fetchAsset(asset.path);
-      if (bytes.byteLength !== asset.bytes || (await io.hash(bytes)) !== asset.sha256)
+      io.check?.();
+      if (bytes.byteLength !== asset.bytes)
         throw new Error('Downloaded pack failed its integrity check.');
+      const digest = await io.hash(bytes);
+      io.check?.();
+      if (digest !== asset.sha256) throw new Error('Downloaded pack failed its integrity check.');
+      io.check?.();
       if (asset.purpose === 'assessment') {
         const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
         const errors = validateLiveRegionPack(parsed);
@@ -291,10 +301,12 @@ export async function installPack(
           manifest.offlineChart,
         );
       await io.stage(asset.path, bytes);
+      io.check?.();
       io.progress?.(++completed, manifest.assets.length);
     }
     if (!pack) throw new Error('No analysis snapshot is available in this download.');
     await io.assertReplacementAllowed?.();
+    io.check?.();
     await io.commit(pack, manifest);
     return pack;
   } catch (error) {

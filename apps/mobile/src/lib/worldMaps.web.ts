@@ -1,5 +1,5 @@
 import * as maplibregl from 'maplibre-gl';
-import { getLocal, setLocal } from './storage';
+import { getLocal, getLocalRaw, setLocal } from './storage';
 import { getAPIBase } from './regionalData';
 import { prepareOfflineShell } from './offlineShell';
 import {
@@ -29,8 +29,16 @@ function requireCache() {
 }
 const io: MapCacheIO = {
   list: async () => {
-    const value = await getLocal<unknown>(key);
-    return Array.isArray(value) ? (value as MapArea[]) : [];
+    const raw = await getLocalRaw(key);
+    if (raw === null) return [];
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new Error('Map index is corrupt; original retained.');
+    }
+    if (!Array.isArray(value)) throw new Error('Map index is invalid; original retained.');
+    return value as MapArea[];
   },
   readManifest: async (id) => {
     requireCache();
@@ -62,6 +70,15 @@ const io: MapCacheIO = {
         headers: { 'Content-Type': 'application/x-protobuf' },
       }),
     );
+  },
+  markForRemoval: async (id) => {
+    const areas = await io.list();
+    if (!areas.some((area) => area.id === id)) return false;
+    await setLocal(
+      key,
+      areas.map((area) => (area.id === id ? { ...area, cleanupPending: true } : area)),
+    );
+    return true;
   },
   remove: async (id) => {
     requireCache();

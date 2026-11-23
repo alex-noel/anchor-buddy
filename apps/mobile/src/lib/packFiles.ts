@@ -1,3 +1,4 @@
+import { removeUnreferencedAsset } from './regionalPacks';
 import { Directory, File, Paths } from 'expo-file-system';
 import {
   OfflineManager,
@@ -5,7 +6,7 @@ import {
   type OfflinePackStatus,
 } from '@maplibre/maplibre-react-native';
 import type { RegionPack } from '@anchor-buddy/domain';
-import { getLocal, setLocal } from './storage';
+import { getLocal, getLocalRaw, setLocal } from './storage';
 import {
   validSegment,
   validateManifest,
@@ -25,6 +26,8 @@ export async function beginPackStage(sessionId: string) {
   const base = new Directory(Paths.document, 'regional-packs');
   base.create({ intermediates: true, idempotent: true });
   const directory = new Directory(base, 'stage-' + sessionId);
+  const installed = new Directory(base, 'installed-' + sessionId);
+  let finalized = false;
   directory.create({ intermediates: true });
   return {
     async stage(name: string, bytes: Uint8Array) {
@@ -33,11 +36,22 @@ export async function beginPackStage(sessionId: string) {
     },
     async finalize() {
       const key = 'installed-' + sessionId;
-      await directory.move(new Directory(base, key));
+      await directory.move(installed);
+      finalized = true;
       return key;
     },
     async rollback() {
-      if (directory.exists) directory.delete();
+      if (!finalized && !installed.exists) {
+        if (directory.exists) directory.delete();
+        return;
+      }
+      await removeUnreferencedAsset(
+        'installed-' + sessionId,
+        () => getLocalRaw('active-region'),
+        () => {
+          if (installed.exists) installed.delete();
+        },
+      );
     },
   };
 }

@@ -1,0 +1,17 @@
+FROM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS gosu-build
+# Rebuild the upstream image's Gosu 1.20 release with a supported Go toolchain.
+RUN CGO_ENABLED=0 GOBIN=/out GOTOOLCHAIN=local go install -trimpath \
+    github.com/tianon/gosu@v0.0.0-20261025094355-29b939aa5bd4
+
+FROM postgis/postgis:17-3.7@sha256:d09654ba11d2a091e220e561c32b17ad00b0858045bc29741e7bcedcd9c4ee60
+# Debian DSA-6650-1 applies to the Kerberos libraries in the base image.
+RUN set -eu; \
+    kerberos_packages='libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0'; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; \
+    for package in $kerberos_packages; do \
+      installed_version="$(dpkg-query -W -f='${Version}' "$package")"; \
+      dpkg --compare-versions "$installed_version" ge '1.21.3-5+deb13u2'; \
+    done; \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=gosu-build --chmod=0755 /out/gosu /usr/local/bin/gosu

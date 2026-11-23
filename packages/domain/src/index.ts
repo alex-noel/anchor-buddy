@@ -8,3 +8,4 @@ export * from './format.ts';
 export * from './seabed.ts';
 export * from './mapContext.ts';
 export * from './contracts.ts';
+export * from './compatibility.ts';

@@ -9,9 +9,11 @@ npm test --workspace @anchor-buddy/api
 npm run typecheck --workspace @anchor-buddy/api
 ```
 
-Node 24 is the supported runtime. The default port is `3001`. Environment values are documented in `.env.example`; the app does not automatically read `.env` files. Export values through your shell or deployment configuration. Core use requires no account. The catalog starts empty until real packs are published; real-source discovery is available separately. There are no runtime demonstration datasets or fallback places.
+Use Node 24.22.3 or a later patched 24.x release. The default port is `3001`. Export the environment values documented in `.env.example` through your shell or deployment configuration. Core use requires no account. The catalog starts empty until real packs are published. Real-source discovery is available separately.
 
 The web preview is allowed from exact localhost/127.0.0.1 origins on ports 8081 and 8082. Override `CORS_ALLOWED_ORIGINS` with a comma-separated deployment allowlist. CORS permits known GET/POST routes and Content-Type preflights; credentials and arbitrary origins are not enabled.
+
+The API allows 30 seconds to receive a request and limits request bodies to 256 KiB. It returns a restrictive browser content security policy and disables MIME sniffing. Map and regional pack bytes are served as attachments. The map proxy rejects upstream media other than JSON, protobuf and vector tile data, PNG, and generic binary data. Regional pack media declared outside the supported types is sent as generic binary data.
 
 | Endpoint                                         | Behavior                                                                                                  |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |

@@ -1,0 +1,10 @@
+# Q08 verification
+
+Baseline supplied: `f7e00acdb9423fb212486931a0cb354e227e41ec`. Shared checkout; no commit created.
+
+- Settings writes use one serialized, complete `settings-v2` record. The persistence tests exercise a delayed write, queued patches, rejected write with unchanged durable bytes, retry, reload, legacy preservation, and invalid/future-byte preservation.
+- Vessel/default forms await their save callback, prevent duplicate saves and dismissal while pending, temporarily hide the mounted controls and dismiss the keyboard, retain their draft on failure, and close on success. App publishes vessel/default changes only after commit. Profile invalidation remains the existing `commitProfile` action after commit; existing controller tests cover its watch independence, and existing form-draft tests cover equipment guidance invalidation.
+- `npm run typecheck --workspace=@anchor-buddy/mobile`: passed.
+- `npm run test --workspace=@anchor-buddy/mobile`: passed 99 tests, including the new persistence tests and existing controller/form-draft tests.
+- Integrator mounted review passed at 390×844: an injected settings write failure retained the edited vessel and old storage; retry saved successfully; completing setup and reloading restored the confirmed vessel/defaults, including zero bow height. No uncaught page errors. Captures and the isolated review script are under `.artifacts/quality-run/`. Native SQLite/device behavior remains separately gated; this browser check uses actual web storage with a test-only failure injection.
+- Q09 must complete preference pending/failure publication behavior: preference values currently publish immediately while the repository write runs. Q11 must address the separately written `setup-complete-v2` marker and verify setup lifecycle. Q10 should use repository read diagnostics for corrupt/future recovery. Legacy settings keys are retained and never rewritten by these writers; rollback to older app code will therefore see the pre-migration legacy values.

@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir: '.', testMatch: 'planner.cases.ts', outputDir: '../../../../.artifacts/planner-harness', workers: 1, use: { baseURL: 'http://127.0.0.1:18184', viewport: { width: 390, height: 844 }, screenshot: 'only-on-failure' }, webServer: { command: 'node serve.mjs', url: 'http://127.0.0.1:18184', reuseExistingServer: false, gracefulShutdown: { signal: 'SIGTERM', timeout: 3000 } } });

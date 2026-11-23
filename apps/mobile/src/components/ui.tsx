@@ -1,4 +1,4 @@
-import React, { useId, type ReactNode } from 'react';
+import React, { useId, useState, type ReactNode } from 'react';
 import {
   Platform,
   Pressable,
@@ -9,8 +9,11 @@ import {
   type ViewStyle,
 } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
-import { colors as c } from '../theme';
+import { colors as c, spacing, textScale } from '../theme';
 export type IconName = React.ComponentProps<typeof Feather>['name'];
+// React Native Web supplies focus in its Pressable style callback.
+export type ControlState = { pressed: boolean; focused?: boolean };
+
 export function Icon({
   name,
   size = 18,
@@ -20,7 +23,16 @@ export function Icon({
   size?: number;
   color?: string;
 }) {
-  return <Feather name={name} size={size} color={color} />;
+  return (
+    <Feather
+      name={name}
+      size={size}
+      color={color}
+      aria-hidden
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    />
+  );
 }
 export function Button({
   children,
@@ -43,12 +55,14 @@ export function Button({
       disabled={disabled}
       accessibilityState={{ disabled }}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={({ pressed, focused }: ControlState) => [
+        s.hitTarget,
         s.button,
         secondary && s.secondary,
         small && { paddingVertical: 10 },
         disabled && { opacity: 0.45 },
         pressed && { opacity: 0.75 },
+        focused && !disabled && s.focusRing,
       ]}
     >
       {icon ? <Icon name={icon} color={secondary ? c.ink : c.white} size={17} /> : null}
@@ -67,19 +81,38 @@ export function Chip({
   onPress?: () => void;
   icon?: IconName;
 }) {
-  return (
-    <Pressable
-      accessibilityRole={onPress ? 'button' : 'text'}
-      accessibilityState={onPress ? { selected } : undefined}
-      aria-pressed={onPress ? selected : undefined}
-      onPress={onPress}
-      style={[s.chip, selected && { backgroundColor: c.ink, borderColor: c.ink }]}
-    >
+  const style = [s.chip, selected && { backgroundColor: c.ink, borderColor: c.ink }];
+  const content = (
+    <>
       {icon ? <Icon name={icon} size={13} color={selected ? 'white' : c.ink} /> : null}
-      <Text style={{ fontSize: 12, fontWeight: '600', color: selected ? 'white' : c.ink }}>
+      <Text
+        style={{
+          fontSize: textScale.compact,
+          fontWeight: '600',
+          color: selected ? 'white' : c.ink,
+        }}
+      >
         {children}
       </Text>
+    </>
+  );
+  return onPress ? (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      aria-pressed={selected}
+      onPress={onPress}
+      style={({ pressed, focused }: ControlState) => [
+        style,
+        s.hitTarget,
+        pressed && { opacity: 0.75 },
+        focused && s.focusRing,
+      ]}
+    >
+      {content}
     </Pressable>
+  ) : (
+    <View style={style}>{content}</View>
   );
 }
 export function Eyebrow({ children }: { children: ReactNode }) {
@@ -98,6 +131,10 @@ export function Field({
   help,
   required = false,
   disabled = false,
+  error,
+  invalid = false,
+  inputRef,
+  onSubmitEditing,
 }: {
   label: string;
   value: string;
@@ -108,16 +145,29 @@ export function Field({
   help?: string;
   required?: boolean;
   disabled?: boolean;
+  /** Error text is announced with the field's label, unit, and help. */
+  error?: string;
+  /** Mark invalid while an error message is being prepared or summarized elsewhere. */
+  invalid?: boolean;
+  /** Lets form owners focus this input without reaching into the rendered tree. */
+  inputRef?: React.Ref<React.ComponentRef<typeof TextInput>>;
+  onSubmitEditing?: () => void;
 }) {
   const hintId = useId();
+  const errorId = useId();
+  const [focused, setFocused] = useState(false);
+  const isInvalid = invalid || Boolean(error);
+  const describedBy =
+    [help ? hintId : undefined, error ? errorId : undefined].filter(Boolean).join(' ') || undefined;
   return (
-    <View style={{ flex: 1, minWidth: 130, gap: 7 }}>
+    <View style={[{ flex: 1, minWidth: 130, gap: 7 }, s.fieldLayout]}>
       <Text style={s.fieldLabel}>
         {label}
         {required ? ' *' : ''}
       </Text>
-      <View style={s.inputWrap}>
+      <View style={[s.inputWrap, isInvalid && s.inputInvalid, focused && !disabled && s.focusRing]}>
         <TextInput
+          ref={inputRef}
           accessibilityLabel={label}
           editable={!disabled}
           accessibilityState={{ disabled }}
@@ -125,13 +175,18 @@ export function Field({
             required ? 'Required.' : '',
             suffix ? `Unit: ${suffix}.` : '',
             help ?? '',
+            error ? `Error: ${error}` : '',
           ]
             .filter(Boolean)
             .join(' ')}
           aria-required={required}
-          aria-describedby={help ? hintId : undefined}
+          aria-invalid={isInvalid}
+          aria-describedby={describedBy}
           value={value}
           onChangeText={onChange}
+          onSubmitEditing={onSubmitEditing}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           keyboardType={
             signed
               ? Platform.OS === 'ios'
@@ -145,15 +200,22 @@ export function Field({
           }
           autoCorrect={false}
           spellCheck={false}
-          returnKeyType="done"
+          returnKeyType={onSubmitEditing ? 'search' : 'done'}
           autoCapitalize="none"
           style={[s.input, disabled && { opacity: 0.6 }]}
         />
-        {suffix ? <Text style={{ color: c.muted, fontSize: 12 }}>{suffix}</Text> : null}
+        {suffix ? (
+          <Text style={{ color: c.muted, fontSize: textScale.compact }}>{suffix}</Text>
+        ) : null}
       </View>
       {help ? (
         <Text nativeID={hintId} style={s.help}>
           {help}
+        </Text>
+      ) : null}
+      {error ? (
+        <Text nativeID={errorId} accessibilityLiveRegion="polite" style={s.fieldError}>
+          {error}
         </Text>
       ) : null}
     </View>
@@ -175,12 +237,19 @@ export function Check({
       aria-checked={checked}
       accessibilityLabel={label}
       onPress={() => onChange(!checked)}
-      style={s.checkRow}
+      style={({ pressed, focused }: ControlState) => [
+        s.checkRow,
+        s.hitTarget,
+        pressed && { opacity: 0.75 },
+        focused && s.focusRing,
+      ]}
     >
-      <View style={[s.check, checked && { backgroundColor: c.green, borderColor: c.green }]}>
+      <View style={[s.check, checked && { backgroundColor: c.action, borderColor: c.action }]}>
         {checked ? <Icon name="check" color="white" size={14} /> : null}
       </View>
-      <Text style={{ flex: 1, color: c.ink, fontSize: 13, lineHeight: 20 }}>{label}</Text>
+      <Text style={{ flex: 1, color: c.ink, fontSize: textScale.compact + 1, lineHeight: 20 }}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -189,24 +258,72 @@ export function Notice({
   tone = 'info',
 }: {
   children: ReactNode;
-  tone?: 'info' | 'warning';
+  tone?: 'info' | 'warning' | 'error' | 'neutral';
 }) {
+  const noticeTone = {
+    info: { background: c.informationLight, foreground: c.information, icon: 'info' as const },
+    warning: { background: c.warningLight, foreground: c.warning, icon: 'alert-circle' as const },
+    error: { background: c.errorLight, foreground: c.error, icon: 'x-circle' as const },
+    neutral: { background: c.neutralLight, foreground: c.neutral, icon: 'minus-circle' as const },
+  }[tone];
   return (
-    <View style={[s.notice, { backgroundColor: tone === 'warning' ? c.orangeLight : c.mint }]}>
-      <Icon
-        name={tone === 'warning' ? 'alert-circle' : 'info'}
-        size={16}
-        color={tone === 'warning' ? c.orange : c.green}
-      />
-      <Text style={{ flex: 1, fontSize: 12, lineHeight: 19, color: c.ink }}>{children}</Text>
+    <View style={[s.notice, { backgroundColor: noticeTone.background }]}>
+      <Icon name={noticeTone.icon} size={16} color={noticeTone.foreground} />
+      <Text style={{ flex: 1, fontSize: textScale.compact, lineHeight: 19, color: c.ink }}>
+        {children}
+      </Text>
+    </View>
+  );
+}
+
+/** Statuses stay legible without color perception and at reduced color contrast. */
+export function StatusPill({ status }: { status: 'passing' | 'excluded' | 'unknown' }) {
+  const presentation = {
+    passing: {
+      label: 'Checks pass',
+      icon: 'check-circle' as const,
+      color: c.success,
+      background: c.successLight,
+    },
+    excluded: {
+      label: 'Excluded',
+      icon: 'x-circle' as const,
+      color: c.error,
+      background: c.errorLight,
+    },
+    unknown: {
+      label: 'Needs more evidence',
+      icon: 'help-circle' as const,
+      color: c.neutral,
+      background: c.neutralLight,
+    },
+  }[status];
+  return (
+    <View
+      accessibilityRole="text"
+      accessibilityLabel={presentation.label}
+      style={[s.statusPill, { backgroundColor: presentation.background }]}
+    >
+      <Icon name={presentation.icon} size={14} color={presentation.color} />
+      <Text style={{ color: presentation.color, fontSize: textScale.compact, fontWeight: '600' }}>
+        {presentation.label}
+      </Text>
     </View>
   );
 }
 export const s = StyleSheet.create({
+  hitTarget: { minWidth: 44, minHeight: 44 },
+  focusRing: {
+    outlineColor: c.ink,
+    outlineStyle: 'solid',
+    outlineWidth: 2,
+    outlineOffset: 1,
+    boxShadow: `0 0 0 2px ${c.white}`,
+  },
   button: {
-    backgroundColor: c.green,
-    paddingHorizontal: 18,
-    paddingVertical: 15,
+    backgroundColor: c.action,
+    paddingHorizontal: spacing.lg + 2,
+    paddingVertical: spacing.md + 3,
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -214,7 +331,7 @@ export const s = StyleSheet.create({
     gap: 9,
   },
   secondary: { backgroundColor: c.white, borderWidth: 1, borderColor: c.line },
-  buttonText: { color: c.white, fontWeight: '600', fontSize: 13 },
+  buttonText: { color: c.white, fontWeight: '600', fontSize: textScale.compact + 1 },
   chip: {
     borderRadius: 8,
     borderWidth: 1,
@@ -226,7 +343,7 @@ export const s = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  eyebrow: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5, color: c.muted },
+  eyebrow: { fontSize: textScale.caption, fontWeight: '600', letterSpacing: 0.5, color: c.muted },
   card: {
     backgroundColor: c.white,
     borderColor: c.line,
@@ -235,7 +352,9 @@ export const s = StyleSheet.create({
     padding: 16,
     gap: 16,
   },
-  fieldLabel: { fontSize: 12, color: c.ink, fontWeight: '600' },
+  fieldLabel: { fontSize: textScale.compact, color: c.ink, fontWeight: '600' },
+  // Keep text or help from overflowing the field's flex box inside a web sheet.
+  fieldLayout: Platform.OS === 'web' ? { minHeight: 'auto' } : {},
   inputWrap: {
     borderWidth: 1,
     borderColor: c.line,
@@ -245,9 +364,18 @@ export const s = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: c.white,
   },
-  input: { flex: 1, fontSize: 14, color: c.ink, paddingVertical: 12, minWidth: 0 },
-  help: { fontSize: 11, lineHeight: 17, color: c.muted },
-  checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 7 },
+  inputInvalid: { borderColor: c.error },
+  input: {
+    flex: 1,
+    fontSize: textScale.body,
+    color: c.ink,
+    paddingVertical: 12,
+    minHeight: 44,
+    minWidth: 0,
+  },
+  help: { fontSize: textScale.caption, lineHeight: 17, color: c.muted },
+  fieldError: { fontSize: textScale.caption, lineHeight: 17, color: c.error },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
   check: {
     width: 21,
     height: 21,
@@ -264,5 +392,14 @@ export const s = StyleSheet.create({
     borderRadius: 12,
     gap: 10,
     alignItems: 'flex-start',
+  },
+  statusPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: 999,
   },
 });

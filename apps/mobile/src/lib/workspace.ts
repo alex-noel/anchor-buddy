@@ -123,7 +123,6 @@ export function readSavedSearches(value: unknown): SavedSearch[] {
       ids.add(item.id);
       return true;
     })
-    .slice(0, 30)
     .map((item) =>
       item.evidence === 'non-synthetic'
         ? item

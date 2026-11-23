@@ -3,6 +3,7 @@ import { Modal, ScrollView, Text, View, useWindowDimensions } from 'react-native
 import type { UnitSystem } from '@anchor-buddy/domain';
 import { Button, Chip, Icon, Notice } from './ui';
 import { colors as c } from '../theme';
+import type { PreferenceStatus } from '../lib/preferenceCommands';
 
 export interface OnboardingSheetProps {
   units: UnitSystem;
@@ -11,6 +12,11 @@ export interface OnboardingSheetProps {
   onEditDefaults: () => void;
   vesselConfigured: boolean;
   defaultsConfigured: boolean;
+  vesselSummary?: string;
+  defaultsSummary?: string;
+  preferenceStatus?: PreferenceStatus;
+  otherPreferencesUnsaved?: boolean;
+  onRetryUnits: () => void;
   onFinish: () => void;
   onClose?: () => void;
   error?: string;
@@ -86,13 +92,19 @@ export function OnboardingSheet({
   onEditDefaults,
   vesselConfigured,
   defaultsConfigured,
+  vesselSummary,
+  defaultsSummary,
+  preferenceStatus,
+  otherPreferencesUnsaved = false,
+  onRetryUnits,
   onFinish,
   onClose,
   error = '',
   busy = false,
 }: OnboardingSheetProps) {
   const { width, height } = useWindowDimensions();
-  const ready = vesselConfigured && defaultsConfigured;
+  const ready =
+    vesselConfigured && defaultsConfigured && !preferenceStatus && !otherPreferencesUnsaved;
   return (
     <Modal
       transparent
@@ -154,11 +166,22 @@ export function OnboardingSheet({
                     ? 'Kilometres · metres · km/h'
                     : 'Miles · feet · mph'}
               </Text>
+              {preferenceStatus?.state === 'pending' ? (
+                <Text accessibilityLiveRegion="polite">Saving units…</Text>
+              ) : null}
+              {preferenceStatus?.state === 'error' ? (
+                <>
+                  <Notice tone="warning">Units are not saved. {preferenceStatus.message}</Notice>
+                  <Button secondary small onPress={onRetryUnits}>
+                    Retry units
+                  </Button>
+                </>
+              ) : null}
             </View>
             <SetupStep
               number={1}
               title="Your vessel"
-              description="Enter dimensions, loaded draft and anchor equipment."
+              description={vesselSummary ?? 'Enter dimensions, loaded draft and anchor equipment.'}
               complete={vesselConfigured}
               action={onEditVessel}
               actionLabel="Configure vessel"
@@ -167,7 +190,10 @@ export function OnboardingSheet({
             <SetupStep
               number={2}
               title="Search defaults"
-              description="Set your preferred depth, seabed, search radius and operating limits."
+              description={
+                defaultsSummary ??
+                'Set your preferred depth, seabed, search radius and operating limits.'
+              }
               complete={defaultsConfigured}
               action={onEditDefaults}
               actionLabel="Configure defaults"
@@ -189,7 +215,13 @@ export function OnboardingSheet({
               ) : null}
               {!ready ? (
                 <Text style={{ fontSize: 12, lineHeight: 18, color: c.muted, textAlign: 'center' }}>
-                  Complete both steps to continue.
+                  {!vesselConfigured
+                    ? 'Configure and save your vessel to continue.'
+                    : !defaultsConfigured
+                      ? 'Configure and save your search defaults to continue.'
+                      : otherPreferencesUnsaved
+                        ? 'Save or retry your other preferences in Settings to continue.'
+                        : 'Wait for units to save before continuing.'}
                 </Text>
               ) : null}
             </View>

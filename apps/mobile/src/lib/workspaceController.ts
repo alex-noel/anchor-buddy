@@ -1,4 +1,4 @@
-import type { Candidate, Position, SearchRequest } from '@anchor-buddy/domain';
+import type { Candidate, Position, SearchRequest, SavedPlanPayload } from '@anchor-buddy/domain';
 import { DEFAULT_FILTERS, type ResultFilters } from './workspace';
 
 export type Tab = 'explore' | 'saved' | 'settings';
@@ -10,6 +10,7 @@ export type Plan = {
   candidate: Candidate;
   allowance: 0 | 20 | 30;
   search: SearchRequest;
+  savedDraft?: { id: string; payload: SavedPlanPayload };
 };
 export type DetailSelection = { candidate: Candidate; allowance: 0 | 20 | 30 };
 export type ModalName =
@@ -85,13 +86,14 @@ export type WorkspaceAction =
   | {
       type: 'commitSearch';
       search: SearchRequest;
-      area?: { regionName: string; timezone: string };
+      area?: { regionName: string; timezone?: string };
       filters?: ResultFilters;
       pin?: Position;
     }
   | { type: 'openDetails'; selection: DetailSelection; search: SearchRequest | null }
   | { type: 'closeDetails' }
   | { type: 'openPlan'; plan: Plan }
+  | { type: 'markPlanSaved'; instance: number; id: string; payload: SavedPlanPayload }
   | { type: 'showWatch'; setup?: { position: Position; radius?: number } }
   | { type: 'commitProfile' }
   | { type: 'closeSearch' };
@@ -221,6 +223,13 @@ export function workspaceReducer(
         modal: state.modal?.name === 'detail' ? null : state.modal,
         flow: 'plan',
       };
+    case 'markPlanSaved':
+      return state.plan?.instance === action.instance
+        ? {
+            ...state,
+            plan: { ...state.plan, savedDraft: { id: action.id, payload: action.payload } },
+          }
+        : state;
     case 'showWatch':
       return {
         ...state,

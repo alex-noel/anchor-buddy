@@ -15,13 +15,18 @@
     "test": "npm run test --workspaces --if-present",
     "test:ingest": "PYTHONPATH=workers/ingest python3 -m unittest discover -s workers/ingest/tests -v",
     "check:runtime": "node --test scripts/runtime-guard.test.mjs scripts/ci/scan.test.mjs && node scripts/check-runtime.mjs",
-    "check": "npm run check:runtime && npm run typecheck && npm test && npm run test:ingest"
+    "check": "npm run check:runtime && npm run typecheck && npm test && npm run test:ingest",
+    "test:e2e": "npm run test:e2e --workspace=@anchor-buddy/mobile --"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^24.19.2",
+    "esbuild": "0.28.2",
     "prettier": "^3.9.10",
-    "tsx": "^4.20.0",
-    "typescript": "~5.9.2"
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "minimatch": "^11.0.9"
   },
   "engines": {
     "node": ">=22.13.0"

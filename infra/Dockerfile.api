@@ -1,13 +1,27 @@
-FROM node:24-bookworm-slim
+FROM node:24.22.3-alpine3.24 AS dependencies
 WORKDIR /app
-COPY package.json package-lock.json tsconfig.base.json ./
+COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY packages/domain/package.json packages/domain/package.json
-RUN npm ci --workspace @anchor-buddy/api --include-workspace-root
-COPY packages/domain packages/domain
-COPY apps/api apps/api
-RUN mkdir -p /data/packs && chown -R node:node /data /app
+RUN npm install --global npm@11.21.3 --ignore-scripts --no-audit --no-fund \
+    && npm ci --workspace @anchor-buddy/api --omit=dev --no-audit --no-fund
+
+FROM alpine:3.24.4
+RUN apk upgrade --no-cache \
+    && apk add --no-cache ca-certificates libstdc++ \
+    && addgroup -S -g 1000 node \
+    && adduser -S -D -u 1000 -G node node \
+    && mkdir -p /data/packs \
+    && chown node:node /data /data/packs
+COPY --from=dependencies /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY --from=dependencies /app ./
+COPY tsconfig.base.json ./
+COPY packages/domain/src/ packages/domain/src/
+COPY apps/api/tsconfig.json apps/api/tsconfig.json
+COPY apps/api/src/ apps/api/src/
+WORKDIR /app/apps/api
 USER node
-ENV PORT=3001 PACK_ROOT=/data/packs
+ENV NODE_ENV=production PORT=3001 PACK_ROOT=/data/packs
 EXPOSE 3001
-CMD ["npm", "start", "--workspace", "@anchor-buddy/api"]
+CMD ["node", "--import", "tsx", "src/index.ts"]

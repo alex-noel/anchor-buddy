@@ -1,0 +1,8 @@
+# Q28 verification
+
+- `RegionalData.retention` is explicit: `automatic` may be evicted; `retained` is protected. Absence denotes ambiguous legacy data, which remains protected, including beyond the former eight-entry read cap. An automatic refresh cannot replace an existing retained or legacy record, even with the same ID. Explicit saves/downloads use retained mode; existing source issue and expiry dates are unchanged.
+- Saved shows per-area reported resource bytes and a UTF-8 estimate of cached evidence; browser origin usage/quota is shown when available, otherwise capacity is explicitly unknown. Estimates exclude store overhead and are not guarantees. Per-area IDs are deduplicated; shared global font copies are not counted as separate map areas.
+- User controls allow explicitly retaining evidence or permitting automatic removal. A full protected cache fails with a manage-Saved/retry message; an atomic write rejection retains the original data. Saved maps are never removed by this policy.
+- `node --import tsx --test apps/mobile/src/lib/cacheRetention.test.ts apps/mobile/src/lib/regionalData.test.ts`: 9 passed, including eight-plus entries, same-ID protection, ambiguous legacy preservation, quota failure/retry, expiry preservation, UTF-8 bytes and duplicate map summaries.
+- `npm run typecheck --workspace=@anchor-buddy/mobile`: passed.
+- Integrator-reviewed exported browser recovery case passed at 390×844: eight retained records remain byte-equivalent after a cache-capacity failure; explicitly allowing cleanup for one record permits a new observation to be cached, preserves the other seven protected records and survives reload. Saved visibly offers retention controls and storage estimates. Native device capacity is not measured.

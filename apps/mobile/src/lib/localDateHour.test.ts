@@ -5,6 +5,8 @@ import {
   localHourCandidates,
   localHourToIso,
   localDateLabel,
+  moveCalendarDate,
+  stayTiming,
 } from './localDateHour.ts';
 
 test('local date entry preserves timezone, rejects invalid days and strips minutes', () => {
@@ -55,6 +57,49 @@ test('fractional timezone offsets convert without shifting the chosen local hour
   process.env.TZ = 'Asia/Kathmandu';
   try {
     assert.equal(localHourToIso({ date: '2026-10-30', hour: 8 }), '2026-10-30T02:15:00.000Z');
+  } finally {
+    if (old === undefined) delete process.env.TZ;
+    else process.env.TZ = old;
+  }
+});
+
+test('calendar navigation crosses weeks and clamps days when changing month or year', () => {
+  assert.equal(moveCalendarDate('2026-11-01', 'Home'), '2026-10-26');
+  assert.equal(moveCalendarDate('2026-10-31', 'ArrowRight'), '2026-11-01');
+  assert.equal(moveCalendarDate('2026-10-31', 'PageDown'), '2026-11-30');
+  assert.equal(moveCalendarDate('2024-02-29', 'PageDown', true), '2025-02-28');
+  assert.equal(moveCalendarDate('1900-01-01', 'ArrowLeft'), '1900-01-01');
+});
+
+test('stay and contingency remain separate across the repeated New York hour', () => {
+  const old = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    const arrival = { date: '2026-10-31', hour: 23 };
+    const departure = { date: '2026-11-01', hour: 1 };
+    assert.equal(stayTiming(arrival, departure, 3), null);
+    assert.deepEqual(stayTiming(arrival, { ...departure, occurrence: 1 }, 3), {
+      hours: 3,
+      departure: '2026-11-01T06:00:00.000Z',
+      contingencyEnd: '2026-11-01T09:00:00.000Z',
+    });
+  } finally {
+    if (old === undefined) delete process.env.TZ;
+    else process.env.TZ = old;
+  }
+});
+
+test('fractional daylight-saving transitions preserve elapsed stay and contingency', () => {
+  const old = process.env.TZ;
+  process.env.TZ = 'Australia/Lord_Howe';
+  try {
+    const arrival = { date: '2026-10-03', hour: 23 };
+    assert.equal(stayTiming(arrival, { date: '2026-10-04', hour: 2 }, 3), null);
+    assert.deepEqual(stayTiming(arrival, { date: '2026-10-04', hour: 3 }, 3), {
+      hours: 3.5,
+      departure: '2026-10-03T16:00:00.000Z',
+      contingencyEnd: '2026-10-03T19:00:00.000Z',
+    });
   } finally {
     if (old === undefined) delete process.env.TZ;
     else process.env.TZ = old;

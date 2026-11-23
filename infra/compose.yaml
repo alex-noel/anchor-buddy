@@ -1,12 +1,15 @@
 services:
   database:
-    image: postgis/postgis:17-3.5
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.database
     environment:
       POSTGRES_DB: anchorbuddy
       POSTGRES_USER: anchorbuddy
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment}
     volumes:
-      - postgres:/var/lib/postgresql/data
+      - postgres_trixie:/var/lib/postgresql/data
       - ./001-schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U anchorbuddy -d anchorbuddy"]
@@ -17,8 +20,9 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile.api
-    ports: ["3001:3001"]
+    ports: ["127.0.0.1:3001:3001"]
     environment:
+      NODE_ENV: development
       PACK_ROOT: /data/packs
       NWS_USER_AGENT: ${NWS_USER_AGENT:-Anchor Buddy-development}
     volumes: ["packs:/data/packs:ro"]
@@ -40,5 +44,5 @@ services:
       - packs:/data/packs
       - ./incoming:/data/incoming:ro
 volumes:
-  postgres:
+  postgres_trixie:
   packs:

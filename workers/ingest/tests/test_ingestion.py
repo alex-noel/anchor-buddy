@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from email.message import Message
 import io
 import json
 import os
@@ -8,12 +9,14 @@ import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.request import HTTPSHandler
+from urllib.response import addinfourl
 import zipfile
 
 from anchor_ingest.geometry import geometry_bounds, import_official_geojson, validate_geometry, validate_update_sequence
 from anchor_ingest.packs import build_pack, verify_pack, publish_object_store
 from anchor_ingest.postgis import index_pack
-from anchor_ingest.sources import download_cells, extract_exchange_set, parse_catalog
+from anchor_ingest.sources import download_cells, extract_exchange_set, fetch_bytes, parse_catalog
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -124,6 +127,32 @@ class IngestionTests(unittest.TestCase):
         catalog = (FIXTURES / "catalog.xml").read_bytes().replace(b"https://charts.noaa.gov/", b"https://www.charts.noaa.gov/")
         self.assertEqual(parse_catalog(catalog)[0]["cell"], "US5TEST1")
         self.assertEqual(parse_catalog(catalog.replace(b"www.charts.noaa.gov", b"charts.noaa.gov.attacker.example")), [])
+
+    def test_provider_redirect_is_checked_before_opening_the_destination(self):
+        source_url = "https://charts.noaa.gov/catalog.xml"
+        allowed_hosts = {"charts.noaa.gov", "www.charts.noaa.gov"}
+        for location, destination in [
+            ("/new.xml", "https://charts.noaa.gov/new.xml"),
+            ("https://www.charts.noaa.gov/new.xml", "https://www.charts.noaa.gov/new.xml"),
+            ("https://outside.example/new.xml", None),
+        ]:
+            with self.subTest(location=location):
+                headers = Message()
+                headers["Location"] = location
+                redirect = addinfourl(io.BytesIO(), headers, source_url, 302)
+                redirect.msg = "Found"
+                success = addinfourl(io.BytesIO(b"catalog"), Message(), destination or location, 200)
+                success.msg = "OK"
+                self.addCleanup(redirect.close)
+                self.addCleanup(success.close)
+                with patch.object(HTTPSHandler, "https_open", side_effect=[redirect, success]) as transport:
+                    if destination is None:
+                        with self.assertRaisesRegex(ValueError, "redirect escaped provider allowlist"):
+                            fetch_bytes(source_url, allowed_hosts=allowed_hosts)
+                        transport.assert_called_once()
+                    else:
+                        self.assertEqual(fetch_bytes(source_url, allowed_hosts=allowed_hosts), b"catalog")
+                        self.assertEqual(transport.call_args.args[0].full_url, destination)
 
     def test_relative_download_directory_keeps_relative_provenance_paths(self):
         data = io.BytesIO()

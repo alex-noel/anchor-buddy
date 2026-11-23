@@ -1,0 +1,1714 @@
+{
+  "schemaVersion": 1,
+  "title": "Anchor Buddy app quality plan",
+  "date": "2026-11-17",
+  "timezone": "Europe/Warsaw",
+  "baseline": "f7e00acdb9423fb212486931a0cb354e227e41ec",
+  "taskCount": 40,
+  "scope": "Improve current app UX/UI and finish existing application behavior. User authorized execution on 17 November 2026 using model and reasoning tiers matched to complexity.",
+  "statusPolicy": [
+    "planned",
+    "in_progress",
+    "review",
+    "done",
+    "blocked"
+  ],
+  "tasks": [
+    {
+      "n": 1,
+      "title": "Unify visual hierarchy and semantic colors",
+      "priority": "P1",
+      "lane": "UI",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [],
+      "files": [
+        "apps/mobile/src/theme.ts",
+        "apps/mobile/src/components/ui.tsx"
+      ],
+      "evidence": "theme.ts exposes only two typography styles; green is blue and orange is gray. Screens repeat small text sizes and status styles. This is a consistency opportunity, not evidence that every screen fails contrast.",
+      "scope": "Define semantic action, information, warning, error and neutral tokens plus a small text/spacing scale. Migrate shared primitives first; leave individual screen adoption to their tasks.",
+      "accept": [
+        "Document normal, compact and large-text examples with before/after captures.",
+        "Unknown, excluded and passing statuses remain distinguishable through labels/icons as well as color.",
+        "Core text/control contrast is measured; no assessment status or calculation changes."
+      ],
+      "verify": "Run mobile typecheck; inspect shared controls at 390 and 1280 CSS px and 200% text. No snapshot-only unit tests.",
+      "old": "APP-07",
+      "id": "Q01",
+      "status": "done",
+      "dependencies": [],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "48eb8fb",
+      "validation": "docs/validation/quality-q01.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
+    },
+    {
+      "n": 2,
+      "title": "Finish shared controls and keyboard selection",
+      "priority": "P1",
+      "lane": "UI",
+      "tier": "Routine",
+      "effort": "4–6 h",
+      "deps": [
+        1
+      ],
+      "files": [
+        "apps/mobile/src/components/ui.tsx",
+        "apps/mobile/src/components/SelectField.tsx",
+        "apps/mobile/src/components/AppTour.tsx"
+      ],
+      "evidence": "Shared buttons/chips lack consistent explicit minimum hit areas. SelectField is an expanding button list without complete keyboard selection behavior. The browser accessibility snapshot includes decorative icon glyphs in control names.",
+      "scope": "Give controls visible focus and predictable disabled/pressed states, hide decorative icons from accessible names, enlarge small targets, and implement one coherent keyboard pattern for SelectField.",
+      "accept": [
+        "Interactive hit areas reach 44×44 CSS px or equivalent without overlapping neighbors.",
+        "Keyboard can open, choose and cancel a select; selection remains visible and focus returns predictably.",
+        "Accessible names contain meaningful text without icon glyphs; selected/disabled state is announced.",
+        "Tour step controls remain compact visually while being comfortably tappable."
+      ],
+      "verify": "Mobile typecheck plus keyboard/screen-reader smoke on mounted controls. Add only interaction tests for the selection behavior.",
+      "old": "APP-07",
+      "id": "Q02",
+      "status": "done",
+      "dependencies": [
+        "Q01"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "4b049a3",
+      "validation": "docs/validation/quality-q02.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
+    },
+    {
+      "n": 3,
+      "title": "Connect validation errors to their fields",
+      "priority": "P0",
+      "lane": "UI",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [
+        1
+      ],
+      "files": [
+        "apps/mobile/src/components/ui.tsx",
+        "apps/mobile/src/lib/formDrafts.ts"
+      ],
+      "evidence": "Field supports help and required state but has no error/invalid prop or focus handle. Forms flatten validation messages into a notice at the bottom.",
+      "scope": "Add optional error, invalid state and focus support to Field, with a small mapping from existing validation paths to field labels. Search and vessel tasks consume this API.",
+      "accept": [
+        "Error text is associated with the input and announced together with label/unit/help.",
+        "Required, disabled, zero and empty values retain their existing meanings.",
+        "Form owners can focus the first invalid field without querying internal DOM structure.",
+        "Unrecognized domain errors remain visible in a form-level summary rather than being dropped."
+      ],
+      "verify": "Mobile typecheck and one mounted invalid-field check; test only nontrivial error-path mapping. Do not change domain validation.",
+      "old": "APP-02; APP-07",
+      "id": "Q03",
+      "status": "done",
+      "dependencies": [
+        "Q01"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "cd9ce4d",
+      "validation": "docs/validation/quality-q03.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
+    },
+    {
+      "n": 4,
+      "title": "Make sheets preserve focus and unsaved work",
+      "priority": "P1",
+      "lane": "UI",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        2,
+        3,
+        8
+      ],
+      "files": [
+        "apps/mobile/src/components/Sheet.tsx",
+        "apps/mobile/src/components/Forms.tsx"
+      ],
+      "evidence": "Sheet closes directly on close/back and has no action footer or dirty-state interface. React Native Modal may already provide some focus behavior; verify it before adding a replacement.",
+      "scope": "Add opt-in footer, pending and dirty-close policies for editable forms. Verify dialog naming, initial focus, background isolation, Escape/back and focus restoration using the existing Modal.",
+      "accept": [
+        "Untouched forms close immediately; dirty forms offer Keep editing and Discard.",
+        "Save/close actions remain reachable with the software keyboard or a short viewport.",
+        "Pending commit cannot be accidentally dismissed; failed commit retains editable input.",
+        "Informational sheets retain their simple close behavior and focus returns to their trigger."
+      ],
+      "verify": "Mounted web keyboard flow, 390×844 and short-height checks; record native keyboard behavior separately once a build is available.",
+      "old": "APP-02; APP-07",
+      "id": "Q04",
+      "status": "done",
+      "dependencies": [
+        "Q02",
+        "Q03",
+        "Q08"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q04.md",
+      "commit": "e40e985",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
+    },
+    {
+      "n": 5,
+      "title": "Polish the responsive app shell and notices",
+      "priority": "P1",
+      "lane": "Shell",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [
+        1,
+        2
+      ],
+      "files": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/components/ui.tsx"
+      ],
+      "evidence": "App.tsx uses a fixed-height header and a single 960px breakpoint. Empty Explore exposes inactive filters before a search. Its global message is one dismiss button, making content/status semantics weak. Current 390px Explore had no document overflow.",
+      "scope": "Adapt header/navigation and Explore empty-state hierarchy to narrow screens and large text. Give global notices readable content and a separate dismiss action with appropriate status semantics.",
+      "accept": [
+        "At 320/390/768/1280 widths, title, watch entry and tabs remain reachable with no document overflow.",
+        "Empty Explore emphasizes starting/opening a search and downloading a map; inactive controls do not dominate.",
+        "Notice text is announced once and remains readable independently of its dismiss control.",
+        "Navigation and closing a search preserve independently verified active watch status."
+      ],
+      "verify": "Before/after captures at stated widths, 200% text and keyboard checks; mobile typecheck. Keep controller transitions unchanged.",
+      "old": "APP-03; APP-07",
+      "id": "Q05",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q02"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q05.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
+    },
+    {
+      "n": 6,
+      "title": "Add a repeatable browser journey harness",
+      "priority": "P0",
+      "lane": "QA",
+      "tier": "Engineering",
+      "effort": "5–8 h",
+      "deps": [],
+      "files": [
+        "apps/mobile/package.json",
+        "package.json",
+        "scripts/ci/verify.mjs",
+        "apps/mobile/e2e/ (new)"
+      ],
+      "evidence": "The mobile test command runs library and service-worker tests. Browser journeys in docs/validation are manual; no mounted end-to-end suite currently runs.",
+      "scope": "Add a small browser harness and one documented local command with isolated storage, server lifecycle cleanup and failure artifacts. Cover initial setup, empty Explore, search submit/cancel, save/close/reopen and the browser watch boundary.",
+      "accept": [
+        "Tests run without internet or real provider availability using test-runner-only interception/fixtures.",
+        "Production bundles, runtime entry points and API behavior gain no fixture toggle or synthetic fallback.",
+        "Unexpected page errors fail the run; failures capture a useful screenshot and control context.",
+        "Suite starts/stops only its own servers and leaves existing user browser data untouched."
+      ],
+      "verify": "Run the new command twice from isolated contexts and npm run check:runtime. Keep positive nautical fixtures behind existing test-only boundaries.",
+      "old": "QA-01",
+      "id": "Q06",
+      "status": "done",
+      "dependencies": [],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "48eb8fb",
+      "validation": "docs/validation/quality-q06.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
+    },
+    {
+      "n": 7,
+      "title": "Use exact conversions consistently",
+      "priority": "P0",
+      "lane": "Forms",
+      "tier": "Engineering",
+      "effort": "2–4 h",
+      "deps": [],
+      "files": [
+        "packages/domain/src/contracts.ts",
+        "packages/domain/src/format.ts",
+        "apps/mobile/src/lib/units.ts",
+        "apps/mobile/src/lib/mapDownloadControls.ts",
+        "apps/mobile/src/components/Forms.tsx"
+      ],
+      "evidence": "CANONICAL_CONVERSIONS already defines the policy, while Forms and units use rounded 1.15078/3.28084-style constants.",
+      "scope": "Reuse frozen exact conversion constants across inputs and display; preserve the existing untouched-draft behavior and canonical stored quantities.",
+      "accept": [
+        "Repeated nautical/metric/imperial toggles preserve untouched values within the frozen tolerance.",
+        "An edited display value is converted exactly once when committed; zero bow height stays zero.",
+        "Search radius, wind, vessel dimensions and map-download units match their labels.",
+        "No safety limit, rounding policy for assessment, or domain contract changes."
+      ],
+      "verify": "Extend units/formDrafts/mapDownloadControls tests for boundary and round-trip cases; run domain/mobile tests and typechecks. Numerical diff needs independent review.",
+      "old": "FOUNDATION-02 follow-through; APP-07",
+      "id": "Q07",
+      "status": "done",
+      "dependencies": [],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "e1595a0",
+      "validation": "docs/validation/quality-q07.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
+    },
+    {
+      "n": 8,
+      "title": "Commit vessel and default saves before closing",
+      "priority": "P0",
+      "lane": "Persistence",
+      "tier": "Engineering",
+      "effort": "5–8 h",
+      "deps": [],
+      "files": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/components/Forms.tsx",
+        "apps/mobile/src/lib/storage.ts",
+        "apps/mobile/src/lib/storage.web.ts",
+        "docs/contracts/v2.md"
+      ],
+      "evidence": "App.tsx saveVessel/saveDefaults mutate state before unawaited persist; persist catches failures. Forms calls void onSave and closes immediately.",
+      "scope": "Return explicit asynchronous save outcomes, commit before publishing active values, and keep the draft open during pending/failure. Add a reusable persistence command boundary without redoing the workspace controller. Before changing writers, freeze one authoritative settings key/envelope, commit-result API and legacy-read/migration ownership, consistent with docs/contracts/v2.md. Q09–Q11 must consume that interface; do not introduce competing migrations.",
+      "accept": [
+        "A failed write preserves previous committed/active values and all edited form input.",
+        "Pending save prevents duplicate commits; success closes once and survives reload.",
+        "Retry commits the intended draft once and clears the local error.",
+        "Equipment changes still invalidate guidance/plans only at the correct committed transition and never stop an active watch.",
+        "The handoff names the authoritative persistence interface and legacy compatibility policy used by preference, startup and setup tasks."
+      ],
+      "verify": "Inject rejected/delayed writes; test retry and reload. Run mobile library tests/typecheck and a mounted form flow. Reviewer inspects state/publication order.",
+      "old": "APP-02",
+      "id": "Q08",
+      "status": "done",
+      "dependencies": [],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "e1595a0",
+      "validation": "docs/validation/quality-q08.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
+    },
+    {
+      "n": 9,
+      "title": "Serialize preference changes and report failures",
+      "priority": "P0",
+      "lane": "Persistence",
+      "tier": "Engineering",
+      "effort": "3–4 h",
+      "deps": [
+        8
+      ],
+      "files": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/screens/SettingsScreen.tsx",
+        "apps/mobile/src/lib/storage.ts",
+        "apps/mobile/src/lib/storage.web.ts"
+      ],
+      "evidence": "savePreferences publishes units/offline/layers and launches an unawaited save. Rapid combined changes and failures have no explicit per-action lifecycle.",
+      "scope": "Serialize or supersede preference writes so the latest combined intent wins. Show pending/failure/retry adjacent to the changed preference and use explicit rollback or retained-unsaved state.",
+      "accept": [
+        "Rapid unit/layer/offline changes reload as the latest combined selection.",
+        "An older write cannot overwrite a newer acknowledged choice.",
+        "Write failure is visible beside its control with Retry or rollback, not a silent success.",
+        "Changing display units does not change vessel/search physical values or native watch configuration."
+      ],
+      "verify": "Controlled delayed/reordered/rejected write tests and Settings reload smoke; mobile tests/typecheck.",
+      "old": "APP-02",
+      "id": "Q09",
+      "status": "done",
+      "dependencies": [
+        "Q08"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "09e783a",
+      "validation": "docs/validation/quality-q09.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
+    },
+    {
+      "n": 10,
+      "title": "Recover readable data after partial startup failure",
+      "priority": "P0",
+      "lane": "Persistence",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        8
+      ],
+      "files": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/lib/storage.ts",
+        "apps/mobile/src/lib/storage.web.ts",
+        "apps/mobile/src/lib/workspace.ts"
+      ],
+      "evidence": "Startup reads through one Promise.all; a rejected read can prevent applying otherwise valid data. Malformed JSON is returned as null, indistinguishable from an absent record.",
+      "scope": "Represent missing, corrupt and temporarily unreadable records distinctly; hydrate valid categories independently and offer targeted retry/recovery. Preserve current storage identifiers and versioned contracts.",
+      "accept": [
+        "A corrupt optional cache cannot hide a valid vessel or saved-search library.",
+        "Recovery identifies the affected category and never silently overwrites recoverable records as a new installation.",
+        "Unknown schema versions remain preserved and visibly unsupported; migration does not relabel data as verified.",
+        "Native watch verification remains independent and reachable during startup recovery."
+      ],
+      "verify": "Fault-injection cases for one rejection, malformed JSON, unknown version and mixed valid records; reload/retry smoke. Independent review required for migration/deletion behavior.",
+      "old": "APP-02",
+      "id": "Q10",
+      "status": "done",
+      "dependencies": [
+        "Q08"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q10.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
+    },
+    {
+      "n": 11,
+      "title": "Finish setup as one durable configuration",
+      "priority": "P0",
+      "lane": "Persistence",
+      "tier": "Engineering",
+      "effort": "3–5 h",
+      "deps": [
+        8,
+        9,
+        10
+      ],
+      "files": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/components/Onboarding.tsx",
+        "apps/mobile/src/lib/storage.ts",
+        "apps/mobile/src/lib/storage.web.ts"
+      ],
+      "evidence": "finishSetup writes vessel, defaults, preferences, profile confirmation and setup completion separately. A partial write can leave inconsistent completion state.",
+      "scope": "Use the existing versioned persistence contract to commit/recover setup coherently. Make completed-step summaries and the next required action clear without pre-filling vessel facts.",
+      "accept": [
+        "Failure at each write boundary cannot expose completed setup with incomplete committed inputs.",
+        "Restart resumes valid progress; retry is idempotent and preserves entered vessel values.",
+        "The final Continue action becomes successful only after durable completion.",
+        "Review initial setup can return to Settings and cannot obstruct a running watch."
+      ],
+      "verify": "Inject interruption before/during completion and reload; cover first setup and reopened setup. Review migration compatibility before merging.",
+      "old": "APP-02",
+      "id": "Q11",
+      "status": "done",
+      "dependencies": [
+        "Q08",
+        "Q09",
+        "Q10"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q11.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
+    },
+    {
+      "n": 12,
+      "title": "Make vessel configuration easier to complete",
+      "priority": "P1",
+      "lane": "Forms",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [
+        3,
+        4,
+        7,
+        8
+      ],
+      "files": [
+        "apps/mobile/src/components/Forms.tsx",
+        "apps/mobile/src/components/Onboarding.tsx"
+      ],
+      "evidence": "ProfileSheet presents all vessel and equipment inputs in a long sheet and reports validation only at the bottom. Required actual values and optional air draft already exist.",
+      "scope": "Group vessel dimensions and anchoring equipment with concise explanations, inline errors and a clear save footer. Preserve required factual inputs and existing equipment invalidation.",
+      "accept": [
+        "Invalid submission focuses the first invalid field and preserves other edits.",
+        "Optional fields are clearly distinguished; all required inputs remain reachable at 390px and large text.",
+        "The form shows selected units and concise completion guidance without inventing equipment ratings.",
+        "Save pending/failure/discard behavior uses the shared form contract."
+      ],
+      "verify": "Before/after phone/desktop captures plus invalid→correct→save/reload journey; mobile typecheck.",
+      "old": "APP-02; APP-07",
+      "id": "Q12",
+      "status": "done",
+      "dependencies": [
+        "Q03",
+        "Q04",
+        "Q07",
+        "Q08"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q12.md",
+      "commit": "ba9bba8",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
+    },
+    {
+      "n": 13,
+      "title": "Organize search into area stay and limits",
+      "priority": "P1",
+      "lane": "Forms",
+      "tier": "Routine",
+      "effort": "4–6 h",
+      "deps": [
+        3,
+        4,
+        7,
+        8,
+        12
+      ],
+      "files": [
+        "apps/mobile/src/components/Forms.tsx",
+        "apps/mobile/src/components/SeabedSelect.tsx",
+        "apps/mobile/src/components/MapRegionPicker.tsx"
+      ],
+      "evidence": "SearchSheet contains location/map/coordinates, dates, seabeds and many operating inputs in one scrolling form. The mounted defaults form exposes the full sequence before Save.",
+      "scope": "Put area and stay first, group depth/seabed and operating limits, and add concise current-value summaries for collapsed sections. Wire inline errors and an accessible primary footer.",
+      "accept": [
+        "New search and Search defaults retain their different semantics and actions.",
+        "Current safety/operating values remain discoverable; collapsing a section never resets or silently changes values.",
+        "Validation expands/focuses the offending section and does not close the form.",
+        "Multi-seabed selection, custom centre and cancellation preserve existing behavior."
+      ],
+      "verify": "Mounted new/default/edit flows at phone width with invalid radius and multiple seabeds; existing formDrafts tests and typecheck.",
+      "old": "APP-03; APP-07",
+      "id": "Q13",
+      "status": "done",
+      "dependencies": [
+        "Q03",
+        "Q04",
+        "Q07",
+        "Q08",
+        "Q12"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q13.md",
+      "commit": "a771390",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
+    },
+    {
+      "n": 14,
+      "title": "Clarify stay timezones and calendar interaction",
+      "priority": "P1",
+      "lane": "Forms",
+      "tier": "Engineering",
+      "effort": "3–5 h",
+      "deps": [
+        2,
+        13
+      ],
+      "files": [
+        "apps/mobile/src/components/LocalDateHourField.tsx",
+        "apps/mobile/src/lib/localDateHour.ts",
+        "apps/mobile/src/components/Forms.tsx"
+      ],
+      "evidence": "The calendar has hard-coded single-letter weekday headers and no explicit day-grid keyboard pattern. Existing helpers handle skipped/repeated local hours; this capability should be preserved.",
+      "scope": "Show the timezone actually used for entry and the resulting stay/contingency summary. Add accessible calendar navigation and full weekday/date announcements without silently changing the time basis.",
+      "accept": [
+        "Device timezone and selected-area timezone differences are explicit wherever they affect interpretation.",
+        "Keyboard can traverse days/months and cancel; selected day and repeated-hour choice are announced.",
+        "Existing DST gap/overlap validation remains explicit and overnight duration is preserved.",
+        "Stay versus contingency end is understandable; UTC persistence remains unchanged."
+      ],
+      "verify": "Existing localDateHour tests plus keyboard calendar journey and two timezone/DST examples; do not redesign timezone conversion without review.",
+      "old": "APP-03; APP-07",
+      "id": "Q14",
+      "status": "done",
+      "dependencies": [
+        "Q02",
+        "Q13"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q14.md",
+      "commit": "05810d3",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium"
+    },
+    {
+      "n": 15,
+      "title": "Make submitted search progress and completion truthful",
+      "priority": "P1",
+      "lane": "Search",
+      "tier": "Engineering",
+      "effort": "3–5 h",
+      "deps": [
+        13
+      ],
+      "files": [
+        "apps/mobile/src/components/Forms.tsx",
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/lib/regionalData.ts",
+        "apps/mobile/src/lib/workspaceController.ts"
+      ],
+      "evidence": "Location lookup has loading/no-results handling but no explicit local cancellation. openSaved announces reassessment before asynchronous search-data work completes.",
+      "scope": "Add explicit lookup cancellation and useful offline/no-match/provider-failure feedback; announce reassessment completion only for the active finished request. Reuse existing request generations.",
+      "accept": [
+        "Queries are sent only on explicit submit or Enter; no autocomplete/network-on-keystroke.",
+        "Changed query, cancellation or newer search prevents old matches/success messages from replacing current intent.",
+        "Reassessment starts as pending; final message distinguishes fresh, cached, partial and failed evidence.",
+        "Long match names wrap and selected area stays clear; no fabricated fallback places."
+      ],
+      "verify": "Delayed, cancelled, empty, offline and provider-failure cases using controlled transport; mounted search/reopen flow and controller tests.",
+      "old": "APP-03; QA-01",
+      "id": "Q15",
+      "status": "done",
+      "dependencies": [
+        "Q13"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q15.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
+    },
+    {
+      "n": 16,
+      "title": "Recover map loading and renderer errors",
+      "priority": "P1",
+      "lane": "Maps",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        1,
+        5
+      ],
+      "files": [
+        "apps/mobile/src/components/Chart.web.tsx",
+        "apps/mobile/src/components/Chart.tsx",
+        "apps/mobile/src/components/useChartStyle.ts"
+      ],
+      "evidence": "Chart.web sets a generic warning for map errors and never clears it. Chart.tsx has no equivalent explicit loading/failure presentation.",
+      "scope": "Model initial loading, partial tile/source failure, renderer failure and recovered state. Offer retry or list fallback; use confirmed cached-map readiness when explaining offline display.",
+      "accept": [
+        "A transient error clears only after an appropriate successful recovery signal.",
+        "Partial tiles and a failed renderer have different helpful messages.",
+        "Retry does not lose selected place, chosen pin or map area.",
+        "Phone overlays remain clear of attribution and controls; native behavior is verified on available builds or marked pending."
+      ],
+      "verify": "Inject map/source events, inspect online→failure→recovery and offline-cache behavior. Web mounted check; native check after Q36/Q37.",
+      "old": "APP-04; APP-05",
+      "id": "Q16",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q05"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q16.md",
+      "commit": "3f792ac",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 17,
+      "title": "Keep map markers ranks and selection consistent",
+      "priority": "P1",
+      "lane": "Maps",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        1,
+        16
+      ],
+      "files": [
+        "apps/mobile/src/components/Chart.web.tsx",
+        "apps/mobile/src/components/Chart.tsx",
+        "apps/mobile/src/components/ResultCard.tsx",
+        "apps/mobile/src/App.tsx"
+      ],
+      "evidence": "Both chart implementations independently take the first 50 results and assign rank by array position. Selection styling replaces status color, and the selected map card loses status context.",
+      "scope": "Derive a shared display model for rank/status/selection and make the first-50 boundary explicit. Preserve status when selected and keep manual pins separate.",
+      "accept": [
+        "Filtering/sorting produces identical visible rank and selected identity in map/list.",
+        "Selecting a list item beyond the marker limit either reveals it explicitly or explains its absence; it never highlights another place.",
+        "Selected markers retain human-readable status; manual pins are not added to source-result counts.",
+        "A compact legend explains marker/selection symbols without implying nautical coverage."
+      ],
+      "verify": "Deterministic cases with >50 results, filter/sort changes, removed selection and manual pin; mounted map/list check plus native later.",
+      "old": "APP-04",
+      "id": "Q17",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q16"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q17.md",
+      "commit": "3f792ac",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 18,
+      "title": "Improve result card scanning and status language",
+      "priority": "P1",
+      "lane": "Results",
+      "tier": "Routine",
+      "effort": "3–4 h",
+      "deps": [
+        1,
+        2
+      ],
+      "files": [
+        "apps/mobile/src/components/ResultCard.tsx"
+      ],
+      "evidence": "Cards use very small status text and raw a.status in accessible labels; they do not surface a concise leading evidence/exclusion reason.",
+      "scope": "Use a consistent hierarchy for name/type, assessment status, distance/depth/cost and one leading reason. Translate internal statuses into clear display language.",
+      "accept": [
+        "Unknown depth/price is visibly different from zero depth or free.",
+        "Excluded and insufficient evidence are distinguishable without relying on color.",
+        "Accessible name communicates place and status naturally, without internal enum/glyph noise.",
+        "Long names and large text wrap without hiding the open-details action."
+      ],
+      "verify": "Visual matrix using existing test-only assessments with long names, unknowns and each status; phone/desktop and screen-reader smoke. No calculation changes.",
+      "old": "APP-03; APP-07",
+      "id": "Q18",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q02"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "commit": "cd9ce4d",
+      "validation": "docs/validation/quality-q18.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
+    },
+    {
+      "n": 19,
+      "title": "Explain filters and empty result states",
+      "priority": "P1",
+      "lane": "Search",
+      "tier": "Routine",
+      "effort": "3–4 h",
+      "deps": [
+        5,
+        15,
+        18
+      ],
+      "files": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/components/AdvancedFiltersSheet.tsx",
+        "apps/mobile/src/lib/workspace.ts"
+      ],
+      "evidence": "Applied filters are mostly summarized inside Advanced filters. Different empty result situations share generic No matching results wording.",
+      "scope": "Show a compact summary distinguishing result filters from search/seabed preferences. Add a Reset result filters action for result-only state; preserve the existing Advanced Reset → All seabeds/no preference → Apply/reassess behavior with explicit wording. Use existing data/request state to distinguish no search, loading, unavailable provider, no source places and filters hiding results.",
+      "accept": [
+        "Each empty state gives an appropriate action such as start, retry or reset.",
+        "Reset result filters preserves search/seabed/operating inputs. Advanced Reset explicitly clears seabed preference and reassesses on Apply as today; neither action relaxes safety thresholds.",
+        "Counts agree between map/list and exclude manually inspected pins.",
+        "Advanced filter state and summaries stay synchronized when editing or reopening a saved search."
+      ],
+      "verify": "Mounted matrix for each empty state and combined filters; workspace tests for reset semantics and typecheck.",
+      "old": "APP-03; APP-04",
+      "id": "Q19",
+      "status": "done",
+      "dependencies": [
+        "Q05",
+        "Q15",
+        "Q18"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q19.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
+    },
+    {
+      "n": 20,
+      "title": "Group details around evidence and next actions",
+      "priority": "P1",
+      "lane": "Results",
+      "tier": "Routine",
+      "effort": "4–6 h",
+      "deps": [
+        1,
+        4,
+        18
+      ],
+      "files": [
+        "apps/mobile/src/components/Details.tsx",
+        "apps/mobile/src/components/RegionalDataSheet.tsx"
+      ],
+      "evidence": "Details renders reasons as a flat list and places its planning action after long weather/cost/source content. Existing source attribution and evidence gaps must remain available.",
+      "scope": "Add a decision summary and group exclusions, missing evidence, available facts and provenance with progressive disclosure. Keep plan eligibility and the next action clear near the summary.",
+      "accept": [
+        "All original reasons remain accessible; blocking reasons are visible before the plan action.",
+        "Display context, cached evidence and reviewed analysis use distinct language.",
+        "Source identity, retrieval/expiry dates and applicable limits remain inspectable.",
+        "No new positive safety wording, coverage inference or eligibility change is introduced."
+      ],
+      "verify": "Review excluded/insufficient/passing test-only examples, long source lists and missing fields. Domain-aware reviewer checks wording; phone/desktop captures and typecheck.",
+      "old": "APP-03",
+      "id": "Q20",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q04",
+        "Q18"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q20.md",
+      "commit": "01507bd",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
+    },
+    {
+      "n": 21,
+      "title": "Summarize forecast coverage for the whole stay",
+      "priority": "P1",
+      "lane": "Results",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        14,
+        20
+      ],
+      "files": [
+        "apps/mobile/src/components/Details.tsx",
+        "apps/mobile/src/components/RegionalDataSheet.tsx",
+        "apps/mobile/src/lib/units.ts",
+        "apps/mobile/src/App.tsx"
+      ],
+      "evidence": "Details initially shows 12 weather intervals and RegionalDataSheet 24, with expansion already supported. Neither gives a concise stay/contingency coverage overview.",
+      "scope": "Add an interval-derived summary using an immutable stay presentation prop from the exact search used to assess the detail/plan: arrival, departure, contingency end and displayed timezone. Wire it through App.tsx; never infer stay bounds from forecast rows or a different active search. Area previews with no stay show available forecast range only. Preserve full interval inspection and official warnings.",
+      "accept": [
+        "Summary labels its timezone and distinguishes stay from contingency.",
+        "Worst available wind/gust/wave/current values exclude nulls and never imply complete coverage when gaps exist.",
+        "Centre-point weather context is not promoted into full-footprint assessment evidence.",
+        "All intervals and source dates remain accessible; missing/expired intervals are explicit.",
+        "The summary follows the selected detail/plan search even when it differs from activeSearch; a no-stay area preview makes no stay-coverage claim."
+      ],
+      "verify": "Pure presentation-helper tests for gaps, overlap, nulls, expiry and unit systems; mounted details check. Reviewer verifies that coverage labels follow existing contracts.",
+      "old": "APP-03",
+      "id": "Q21",
+      "status": "done",
+      "dependencies": [
+        "Q14",
+        "Q20"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q21.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / high"
+    },
+    {
+      "n": 22,
+      "title": "Render prices without invented currency or precision",
+      "priority": "P1",
+      "lane": "Results",
+      "tier": "Engineering",
+      "effort": "2–4 h",
+      "deps": [
+        7
+      ],
+      "files": [
+        "apps/mobile/src/lib/units.ts",
+        "packages/domain/src/format.ts",
+        "apps/mobile/src/components/ResultCard.tsx",
+        "apps/mobile/src/components/Details.tsx",
+        "apps/mobile/src/screens/SavedScreen.tsx"
+      ],
+      "evidence": "money defaults absent currency to USD and limits fractional digits to two. Current CostEstimate carries currency/status/totals but no source precision metadata; minorUnitDigits exists only in a separate unwired tariff contract.",
+      "scope": "Centralize formatting for legacy CostEstimate. For a valid known currency, use Intl.NumberFormat's currency default minor-unit precision (JPY 0, USD 2, KWD 3); document this as a display fallback, not source precision. Pass fee status where available; missing status is unknown, not proof of Free. Handle missing/malformed currency explicitly. Do not change tariff arithmetic, recover digits already rounded away, or wire SAFE-03.",
+      "accept": [
+        "Missing currency never silently renders as USD; malformed currency does not crash.",
+        "JPY/USD/KWD display 0/2/3 fractional digits under the documented legacy policy; this does not claim to reconstruct source precision.",
+        "Zero is called Free only when the existing estimate state supports that conclusion.",
+        "Cards, details and saved snapshots render the same known estimate consistently; legacy snapshots lacking fee status do not call an unverified zero Free."
+      ],
+      "verify": "Formatting tests for null currency, invalid code, zero/unknown status, JPY and KWD; domain/mobile typechecks and relevant tests. Reviewer approves formatting policy before coding.",
+      "old": "SAFE-03 presentation subset",
+      "id": "Q22",
+      "status": "done",
+      "dependencies": [
+        "Q07"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "09e783a",
+      "validation": "docs/validation/quality-q22.md",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
+    },
+    {
+      "n": 23,
+      "title": "Make anchor-plan editing and arrival checks clearer",
+      "priority": "P1",
+      "lane": "Planner",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [
+        1,
+        3,
+        4,
+        17
+      ],
+      "files": [
+        "apps/mobile/src/screens/PlannerScreen.tsx"
+      ],
+      "evidence": "Planner combines coordinates, GPS capture, deployed rode, evidence and arrival confirmations in one screen; invalidation and unknown footprint behavior already exist.",
+      "scope": "Group placement, rode/footprint and arrival checks in an explicit sequence. Keep the current chosen point/units visible and make map-pick/capture/cancel status unambiguous.",
+      "accept": [
+        "Edited coordinates and rode remain clear while moving between map and fields.",
+        "Unknown swing footprint or scope is explained without drawing an invented validated circle.",
+        "Invalid entries focus their field; choosing/cancelling a point cannot silently move a confirmed anchor.",
+        "Watch handoff explains what must be physically confirmed and never arms automatically."
+      ],
+      "verify": "Mounted manual/map/cancel/edit-search journeys and existing coordinate tests; native GPS check where available. Preserve assessment engine behavior.",
+      "old": "APP-06; APP-08",
+      "id": "Q23",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q03",
+        "Q04",
+        "Q17"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q23.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 24,
+      "title": "Save anchor-plan drafts and reassess on return",
+      "priority": "P1",
+      "lane": "Planner",
+      "tier": "Engineering",
+      "effort": "6–10 h",
+      "deps": [
+        8,
+        10,
+        23,
+        25,
+        26
+      ],
+      "files": [
+        "apps/mobile/src/screens/PlannerScreen.tsx",
+        "apps/mobile/src/screens/SavedScreen.tsx",
+        "apps/mobile/src/lib/workspaceController.ts",
+        "apps/mobile/src/lib/workspace.ts",
+        "apps/mobile/src/App.tsx",
+        "docs/contracts/v2.md",
+        "packages/domain/src/compatibility.ts (new shared helper, if none exists)"
+      ],
+      "evidence": "Planner coordinates/rode/arrival checks live in local component state; controller plan state is transient. Old APP-06 remains unfinished.",
+      "scope": "Implement explicit Save draft and a Saved entry using LocalRecord<SavedPlanPayload>. This task takes bounded ownership of the shared canonical compatibility fingerprint helper from unfinished SAFE-02: follow the fixed named-key/canonical JSON/SHA-256 specification in docs/contracts/v2.md, with unimplemented optional equipment identifiers explicitly null. The integrator reviews the projection and updates helper ownership before coding; do not add equipment registry/ratings or a competing scheme. Restore intended inputs only and recompute with current vessel/evidence.",
+      "accept": [
+        "Reload preserves named draft coordinates, canonical rode, search/stay, explicit 0/20/30 depth allowance, vessel identity/fingerprint and exact source-pack references; failed save retains edits.",
+        "Reopening requires date review for elapsed stays and reassesses current evidence/profile.",
+        "Arrival confirmations and watch arming/monitoring state are never restored from a draft.",
+        "Unsupported/corrupt draft versions are handled without deleting other saved assets; deletion uses the common lifecycle.",
+        "Canonical fingerprint vectors are stable across key ordering/unit display/name changes and change for relevant canonical vessel inputs; source/version or vessel changes produce a material-change notice."
+      ],
+      "verify": "Save→reload→open→reassess with changed vessel, expired dates and unavailable data; migration/failure tests. Schema and watch-boundary review required before implementation.",
+      "old": "APP-06",
+      "id": "Q24",
+      "status": "done",
+      "dependencies": [
+        "Q08",
+        "Q10",
+        "Q23",
+        "Q25",
+        "Q26"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q24.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 25,
+      "title": "Make the saved library limits and history explicit",
+      "priority": "P1",
+      "lane": "Saved",
+      "tier": "Engineering",
+      "effort": "3–5 h",
+      "deps": [
+        1,
+        8,
+        10
+      ],
+      "files": [
+        "apps/mobile/src/screens/SavedScreen.tsx",
+        "apps/mobile/src/lib/workspace.ts",
+        "apps/mobile/src/App.tsx"
+      ],
+      "evidence": "App.tsx and readSavedSearches silently cap searches at 30. Saved already has collection headings/counts, saved-at/stay/vessel metadata, historical notices and empty actions; preserve these delivered controls.",
+      "scope": "Keep the existing bounded capacity, but require an explicit replace/delete decision before a new save would discard a snapshot. Make replacement preview, cancellation and outcome clear. Verify existing historical labels, long names and collection metadata; change them only where the at-capacity flow exposes a demonstrated ambiguity.",
+      "accept": [
+        "Saving item 31 cannot silently remove an existing named snapshot.",
+        "Historical evidence and expired stay are labelled; Open & reassess remains distinct from inspection.",
+        "Existing headings/counts, metadata and category-specific empty actions remain usable; no redundant library redesign or new sorting/search feature.",
+        "Legacy valid records are preserved; names wrap and snapshot dates are unambiguous."
+      ],
+      "verify": "At-capacity save/cancel/replace regression and reload; mounted empty/mixed/long-name library. No cloud sync or new account system.",
+      "old": "APP-05; APP-06",
+      "id": "Q25",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q08",
+        "Q10"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q25.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
+    },
+    {
+      "n": 26,
+      "title": "Keep deletion pending until it succeeds",
+      "priority": "P1",
+      "lane": "Saved",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        8,
+        25
+      ],
+      "files": [
+        "apps/mobile/src/screens/SavedScreen.tsx",
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/lib/worldMaps.ts",
+        "apps/mobile/src/lib/worldMaps.web.ts",
+        "apps/mobile/src/lib/worldMapsCore.ts",
+        "apps/mobile/src/lib/regionalDataCore.ts"
+      ],
+      "evidence": "SavedScreen invokes void deletion callbacks and dismisses immediately. Map deletion removes assets before metadata writes; a late failure can leave partial deletion, so retaining the card alone is not rollback.",
+      "scope": "Define deletion outcomes as complete, unchanged failure or partial cleanup pending. Await commands for searches/maps/evidence/drafts, reconcile metadata and asset availability after failure, and make retries idempotent. Do not promise rollback of removed assets; prevent opening a partially removed resource as if intact.",
+      "accept": [
+        "Dialog names the exact resource and blocks duplicate delete submissions.",
+        "Failure before mutation retains the item and dialog. Partial failure displays cleanup pending/unavailable with retry, and reload does not falsely present the resource as intact.",
+        "Success removes only the chosen resource and restores sensible focus.",
+        "Active/unverified watch evidence protections are preserved and refusal stays visible."
+      ],
+      "verify": "Inject failure before removal, after some assets, and before/after metadata persistence; retry and reload each state. Verify delayed/successful/protected deletes and keyboard focus. Storage reviewer checks partial-state reconciliation.",
+      "old": "APP-05",
+      "id": "Q26",
+      "status": "done",
+      "dependencies": [
+        "Q08",
+        "Q25"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q26.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 27,
+      "title": "Show map-download stages and usable progress",
+      "priority": "P1",
+      "lane": "Downloads",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [
+        1,
+        2,
+        4
+      ],
+      "files": [
+        "apps/mobile/src/components/MapDownloadsSheet.tsx",
+        "apps/mobile/src/lib/mapDownloadControls.ts"
+      ],
+      "evidence": "Download UI exposes phase strings and tile counts among dense instructions. Coarse-first partial usability, pause/resume and optional evidence already exist.",
+      "scope": "Present preparation, map assets/tiles and optional evidence as distinct stages with truthful progress, pause/resume controls and clear completion actions.",
+      "accept": [
+        "Percentages appear only when a denominator is known; progress announcements are throttled.",
+        "Partial map can be opened only when required coarse tiles/fonts are actually ready.",
+        "Complete map plus failed evidence is shown as two outcomes, not total success or total failure.",
+        "Pause/resume and updated-copy actions keep existing engine integrity and source attribution."
+      ],
+      "verify": "Mounted prepare→partial→pause→resume→complete and evidence-failure scenarios using controlled downloads; existing download tests/typecheck.",
+      "old": "APP-05",
+      "id": "Q27",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q02",
+        "Q04"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q27.md",
+      "commit": "01507bd",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 28,
+      "title": "Expose storage usage and protect retained evidence",
+      "priority": "P1",
+      "lane": "Downloads",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        8,
+        10,
+        25,
+        26
+      ],
+      "files": [
+        "apps/mobile/src/screens/SavedScreen.tsx",
+        "apps/mobile/src/lib/regionalDataCore.ts",
+        "apps/mobile/src/lib/worldMapsCore.ts",
+        "apps/mobile/src/lib/worldMaps.web.ts",
+        "apps/mobile/src/lib/worldMaps.ts",
+        "apps/mobile/src/App.tsx"
+      ],
+      "evidence": "Saved displays individual map sizes without total storage context. regionalDataCore retains eight cache entries, and the UI does not clearly distinguish automatically cached from deliberately retained evidence.",
+      "scope": "Show known map/data usage and browser capacity where available. Define explicit automatic-versus-retained behavior and offer targeted delete/retry for quota failures; reuse existing storage contracts. Introduce explicit retention metadata through a reviewed migration. Existing savedAt is also set by discovery and cannot prove explicit retention; preserve ambiguous legacy entries as protected legacy records until the user chooses, rather than automatically evicting them.",
+      "accept": [
+        "A new live search cannot silently evict evidence explicitly saved by the user.",
+        "Unknown native/browser capacity is labelled unknown; estimates are not guarantees.",
+        "Quota failure retains existing data and provides a useful manage-storage/retry action.",
+        "Retention changes never refresh source expiry or delete saved maps automatically.",
+        "Legacy entries are not classified as explicitly saved solely from savedAt, and ambiguous prior data is preserved until an explicit retention decision."
+      ],
+      "verify": "Eight-plus-region retention and quota failure/retry tests; verify byte totals without double-counting shared assets. Persistence policy review before schema changes.",
+      "old": "APP-05",
+      "id": "Q28",
+      "status": "done",
+      "dependencies": [
+        "Q08",
+        "Q10",
+        "Q25",
+        "Q26"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q28.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high"
+    },
+    {
+      "n": 29,
+      "title": "Cancel reviewed-pack operations safely",
+      "priority": "P1",
+      "lane": "Downloads",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        8,
+        10
+      ],
+      "files": [
+        "apps/mobile/src/screens/SettingsScreen.tsx",
+        "apps/mobile/src/lib/packInstall.ts",
+        "apps/mobile/src/lib/packFiles.ts",
+        "apps/mobile/src/lib/packFiles.web.ts"
+      ],
+      "evidence": "Settings catalogue/download operations use shared busy/message state and timeouts without a user cancellation or lifecycle identity. The installer already stages and verifies content.",
+      "scope": "Add cancellation and request ownership through catalogue retrieval, staging, verification and the last pre-commit guard. Define the durable active-pointer commit as the cancellation boundary: once commit begins, disable Cancel and settle/read its authoritative result even if the view unmounts. Clean only unreferenced staged assets; do not redesign verification/publication.",
+      "accept": [
+        "Cancellation accepted before commit prevents activation and stale UI success. Unmount during commit cannot interrupt a successful durable write or claim cancellation.",
+        "Previous active pack survives pre-commit cancellation/failure; cleanup never deletes assets referenced by a committed active pointer, including after an uncertain response.",
+        "Watch replacement protection is rechecked immediately before activation.",
+        "Retry starts a coherent operation and cannot activate an obsolete response."
+      ],
+      "verify": "Cancel during manifest, transfer, verification and immediately before commit; separately unmount during commit and simulate uncertain completion. Read back active-pointer state before cleanup, run installer fault tests and mounted Settings smoke. Independent activation-boundary review.",
+      "old": "APP-05",
+      "id": "Q29",
+      "status": "done",
+      "dependencies": [
+        "Q08",
+        "Q10"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q29.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Terra / high",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 30,
+      "title": "Make connectivity and evidence freshness visible",
+      "priority": "P1",
+      "lane": "Offline",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [
+        5,
+        15,
+        20
+      ],
+      "files": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/components/RegionalDataSheet.tsx",
+        "apps/mobile/src/lib/useEvidenceRefresh.ts",
+        "apps/mobile/src/lib/connectivityCore.ts"
+      ],
+      "evidence": "Connectivity fallback and refresh logic exist, but offline preference, actual connection loss, retained evidence and expiry are explained in different places.",
+      "scope": "Present a compact current state for connection, offline preference, data retrieval and freshness, with a contextual retry/refresh action. Reuse current refresh/cooldown rules.",
+      "accept": [
+        "Intentional offline planning differs from detected disconnection and provider outage.",
+        "Expired/partial retained evidence keeps original dates during reconnect or failure.",
+        "An active refresh does not obscure the current available data or imply completion.",
+        "Retry respects offline preference/cooldown and cannot replace a newer search."
+      ],
+      "verify": "Online→offline→reconnect, preferred-offline and expired/partial evidence scenarios; connectivity/controller tests and mounted smoke.",
+      "old": "APP-03; APP-05",
+      "id": "Q30",
+      "status": "done",
+      "dependencies": [
+        "Q05",
+        "Q15",
+        "Q20"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q30.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
+    },
+    {
+      "n": 31,
+      "title": "Expose offline app readiness and waiting updates",
+      "priority": "P1",
+      "lane": "Offline",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        5
+      ],
+      "files": [
+        "apps/mobile/src/lib/offlineShell.web.ts",
+        "apps/mobile/src/lib/offlineShell.ts",
+        "apps/mobile/public/anchorbuddy-sw.js",
+        "apps/mobile/src/screens/SettingsScreen.tsx"
+      ],
+      "evidence": "prepareOfflineShell registers/verifies the exported shell during download preparation but exposes no readiness/update state to the UI. Updates deliberately wait for prior tabs to close.",
+      "scope": "Expose read-only shell lifecycle status plus retry and accurate update guidance. Keep Metro unsupported and preserve verified activation behavior.",
+      "accept": [
+        "Shell ready/not-ready/error is separate from map/evidence availability.",
+        "A waiting update explains close/reopen behavior without forcing reload or skipWaiting.",
+        "Failed update keeps the previous complete shell usable and data intact.",
+        "Native/Metro surfaces do not claim browser service-worker readiness."
+      ],
+      "verify": "Exported-build tests for first install, offline reload, waiting version and failed integrity update; scripts/web-offline.test.mjs. Reviewer checks worker lifecycle changes.",
+      "old": "APP-05; QA-02",
+      "id": "Q31",
+      "status": "done",
+      "dependencies": [
+        "Q05"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q31.md",
+      "commit": "d134015",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
+    },
+    {
+      "n": 32,
+      "title": "Organize Settings and localize action feedback",
+      "priority": "P1",
+      "lane": "Settings",
+      "tier": "Routine",
+      "effort": "3–5 h",
+      "deps": [
+        1,
+        2,
+        9,
+        29,
+        31
+      ],
+      "files": [
+        "apps/mobile/src/screens/SettingsScreen.tsx"
+      ],
+      "evidence": "Settings mixes everyday preferences with technical connection/provider controls. A shared message is rendered at the bottom, away from connection and pack actions.",
+      "scope": "Keep everyday boat/display/offline controls easy to find; use clear progressive disclosure for data connection/source details. Place pending/success/failure beside its initiating action.",
+      "accept": [
+        "API connection errors explain endpoint reachability and a retry using current platform context.",
+        "Connection, catalogue and download feedback cannot overwrite one another misleadingly.",
+        "Success/error announcements use appropriate semantics without repeated chatter.",
+        "Unavailable English translations and AI capability stay truthful; no fake account/sign-in flow."
+      ],
+      "verify": "Phone/desktop settings journey with failed then successful endpoint/catalogue operations and keyboard navigation; typecheck. Preserve the stored endpoint/security rules.",
+      "old": "APP-03; APP-05; APP-07",
+      "id": "Q32",
+      "status": "done",
+      "dependencies": [
+        "Q01",
+        "Q02",
+        "Q09",
+        "Q29",
+        "Q31"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q32.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6 Luna / medium"
+    },
+    {
+      "n": 33,
+      "title": "Validate and cancel watch position capture",
+      "priority": "P0",
+      "lane": "Watch",
+      "tier": "Engineering",
+      "effort": "3–5 h",
+      "deps": [],
+      "files": [
+        "apps/mobile/src/screens/WatchScreen.tsx",
+        "apps/mobile/src/screens/PlannerScreen.tsx",
+        "apps/mobile/src/lib/ (shared capture helper if needed)"
+      ],
+      "evidence": "WatchScreen capture lacks the finite/range/future-time checks and request cancellation already present in PlannerScreen.",
+      "scope": "Reuse or extract planner-quality validation and lifecycle guarding with caller-specific coordinate bounds: map/planner latitude remains ±85°, watch WGS84 latitude remains ±90°, longitude ±180°. Add explicit Cancel and prevent delayed capture from replacing newer manual/map input.",
+      "accept": [
+        "Nonfinite/out-of-range coordinates, negative/nonfinite accuracy, stale and excessively future fixes are rejected.",
+        "Cancel, unmount, a new request or manual edit invalidates the older result.",
+        "Manual entry remains available and fixed-anchor semantics are preserved.",
+        "Only accepted current coordinates reach watch setup; an existing monitoring session is never recentered.",
+        "Shared validation preserves the different map and watch latitude bounds instead of silently narrowing valid watch coordinates."
+      ],
+      "verify": "Focused fix-validation and delayed-request tests plus mounted capture state flow; native acquisition on available builds. Independent watch review required.",
+      "old": "APP-08",
+      "id": "Q33",
+      "status": "done",
+      "dependencies": [],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "commit": "e1595a0",
+      "validation": "docs/validation/quality-q33.md",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "nativeValidation": "Not established by browser or reference tests; downstream Q36/Q37/device gates remain pending."
+    },
+    {
+      "n": 34,
+      "title": "Keep watch readiness aligned with native checks",
+      "priority": "P0",
+      "lane": "Watch",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        2,
+        33
+      ],
+      "files": [
+        "apps/mobile/src/screens/WatchScreen.tsx",
+        "modules/anchor-watch/src/types.ts",
+        "modules/anchor-watch/src/bridge.ts",
+        "modules/anchor-watch/ios/AnchorWatchModule.swift",
+        "modules/anchor-watch/android/src/main/java/expo/modules/anchorwatch/WatchRuntime.kt"
+      ],
+      "evidence": "WatchScreen stores tested as a permanent boolean; Swift and Kotlin reject audible tests older than 600000 ms. Permission readiness is summarized as a boolean despite platform-specific requirements.",
+      "scope": "Show a concise readiness checklist with links to missing actions. Use conservative local monotonic elapsed time from the actual alarm-test request start, require native success, and expire/reset hearing confirmation at the native validity boundary; reset when continuity after resume cannot be proved. Date.now() minus testAlarmAt must never authorize readiness. Native enforcement remains authoritative. Native files are read-only references for this task; a required new bridge field is escalated as a separately reviewed contract/build change.",
+      "accept": [
+        "Expired or unverifiable test cannot leave Arm enabled; Retest is explicit.",
+        "A fresh actual native alarm test plus user hearing confirmation is required; no fake sound/test pass.",
+        "Position/radius, permissions, confirmations and connection freshness each have actionable wording.",
+        "Browser stays unavailable; native arming checks remain enforced even if UI state is stale."
+      ],
+      "verify": "Fake monotonic-clock tests for expiry boundary, delayed native success, background/resume and wall-clock jumps; bridge checks and actual audible confirmation on supported devices. Do not add native contract fields within this bounded UI change.",
+      "old": "APP-08",
+      "id": "Q34",
+      "status": "blocked",
+      "dependencies": [
+        "Q02",
+        "Q33"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q34.md",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "commit": "cd9ce4d",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Implementation and isolated lifecycle checks pass. Actual native audible alarm and hearing confirmation require supported builds/devices."
+    },
+    {
+      "n": 35,
+      "title": "Confirm stopping and verify watch transitions",
+      "priority": "P0",
+      "lane": "Watch",
+      "tier": "Routine",
+      "effort": "2–4 h",
+      "deps": [
+        4,
+        34
+      ],
+      "files": [
+        "apps/mobile/src/screens/WatchScreen.tsx",
+        "apps/mobile/src/App.tsx"
+      ],
+      "evidence": "The active watch Stop control immediately calls Watch.stop. Stopped/running status must continue to be established from the native runtime.",
+      "scope": "Add an intentional stop confirmation naming the active session, pending/error feedback, and native-status verification after the command. Keep the monitoring summary legible from all tabs.",
+      "accept": [
+        "Cancel has no monitoring side effect; confirm issues exactly one stop command.",
+        "Stopped is shown only after fresh authoritative status; failure remains active/unverified with retry.",
+        "No UI navigation, search closure or draft restoration can stop/arm/recenter the watch.",
+        "Alarm acknowledgment and stop remain separate actions with clear labels."
+      ],
+      "verify": "Bridge/mounted tests for cancel, delayed stop, failure and confirmed stop; real device transition during native acceptance. Watch reviewer approves.",
+      "old": "APP-08",
+      "id": "Q35",
+      "status": "blocked",
+      "dependencies": [
+        "Q04",
+        "Q34"
+      ],
+      "review": "Standard review; domain/watch wording review where named in acceptance.",
+      "validation": "docs/validation/quality-q35.md",
+      "commit": "f15be87",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Implementation and isolated stop/session/race checks pass. Real native transition and the documented expected-session protocol limitation require native acceptance."
+    },
+    {
+      "n": 36,
+      "title": "Compile and install the real iOS app",
+      "priority": "P0",
+      "lane": "Native",
+      "tier": "Specialist",
+      "effort": "4–8 h + external setup",
+      "deps": [],
+      "files": [
+        "apps/mobile/app.json",
+        "apps/mobile/package.json",
+        "modules/anchor-watch/ios/",
+        "modules/anchor-watch/ios/AnchorWatch.podspec",
+        "modules/anchor-watch/expo-module.config.json",
+        "docs/validation/ (new iOS evidence)"
+      ],
+      "evidence": "The current ledger records only Command Line Tools and JavaScript/Hermes exports. No full Xcode build or actual iOS monitoring acceptance is recorded.",
+      "scope": "Check available toolchain/signing, build the existing development app, fix narrowly scoped integration errors and install on available simulator/device. Capture actual build and native-module status evidence.",
+      "accept": [
+        "Record source SHA, tool versions, build command and result; JS export is not counted as native compilation.",
+        "Installed app renders map and reaches the native bridge without a missing-module failure.",
+        "Physical-device permission/audio/capture smoke is recorded where available; simulator limits are explicit.",
+        "Missing SDK/signing/device produces an exact blocked gate without invented success or unauthorized account changes."
+      ],
+      "verify": "Real Xcode/Expo build plus install/launch logs. Revalidate changed watch screens after Q33–Q35; overnight/on-water evidence is a separate release gate.",
+      "old": "WATCH-01; APP-08",
+      "gate": "Full Xcode/iOS SDK, CocoaPods; signing and a physical device for device/audio evidence. Toolchain availability must be checked when dispatched.",
+      "id": "Q36",
+      "status": "blocked",
+      "dependencies": [],
+      "review": "Specialist review and actual external evidence where required.",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "validation": "docs/validation/quality-native-preflight.md",
+      "commit": null,
+      "localVerification": "preflight only; build unavailable",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Full Xcode and iPhoneOS SDK are unavailable; native build, signing/install and device checks cannot run."
+    },
+    {
+      "n": 37,
+      "title": "Compile and install the real Android app",
+      "priority": "P0",
+      "lane": "Native",
+      "tier": "Specialist",
+      "effort": "4–8 h + external setup",
+      "deps": [],
+      "files": [
+        "apps/mobile/app.json",
+        "apps/mobile/package.json",
+        "modules/anchor-watch/android/",
+        "modules/anchor-watch/expo-module.config.json",
+        "docs/validation/ (new Android evidence)"
+      ],
+      "evidence": "The current ledger records no configured Android SDK/supported JDK build, only Hermes export and source/reference checks.",
+      "scope": "Check available SDK/JDK, build the existing development app, fix bounded native integration issues and install on emulator/device. Verify foreground-service startup and bridge availability.",
+      "accept": [
+        "Record source SHA, tools, actual Gradle/Expo command and result separately from JavaScript export.",
+        "Installed app renders map and connects to the native service/bridge.",
+        "Permission and notification/channel startup behavior is recorded on an available device.",
+        "Missing toolchain/device is reported as a specific gate; do not promise audible/background monitoring based on emulator success."
+      ],
+      "verify": "Actual Gradle build/install plus service/notification launch evidence. Revalidate Q33–Q35 on device; long-duration/process-kill trials remain separate gates.",
+      "old": "WATCH-02; APP-08",
+      "gate": "Supported JDK and Android SDK/NDK; physical Android device for background/audio evidence. Verify requirements against the installed Expo version when dispatched.",
+      "id": "Q37",
+      "status": "blocked",
+      "dependencies": [],
+      "review": "Specialist review and actual external evidence where required.",
+      "nativeEvidence": "Physical device/build acceptance is pending; see docs/validation/quality-native-preflight.md. Browser and test substitutes are not native evidence.",
+      "validation": "docs/validation/quality-native-preflight.md",
+      "commit": null,
+      "localVerification": "preflight only; build unavailable",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Android SDK/NDK are unavailable and the only installed JVM is Java 11; supported build toolchain and device checks are required."
+    },
+    {
+      "n": 38,
+      "title": "Verify responsive layouts and accessible journeys",
+      "priority": "P1",
+      "lane": "QA",
+      "tier": "Engineering",
+      "effort": "4–6 h",
+      "deps": [
+        6,
+        11,
+        12,
+        13,
+        14,
+        17,
+        18,
+        19,
+        20,
+        21,
+        23,
+        25,
+        27,
+        30,
+        32,
+        35
+      ],
+      "files": [
+        "apps/mobile/e2e/ (created by Q06)",
+        "docs/validation/ (new accessibility evidence)"
+      ],
+      "evidence": "Previous integrated narrow testing was limited to 500px. This planning pass verified a small 390px setup/settings/watch smoke; no complete keyboard/large-text/native accessibility acceptance exists.",
+      "scope": "Add a focused matrix for changed flows at measured 320/390/768/1280 CSS-pixel viewports, keyboard navigation and actual 200% desktop browser zoom. For the zoom case record the host window and resulting effective CSS viewport; do not enlarge screenshots to simulate text growth. Native Dynamic Type/font-scale and software keyboard checks use real OS settings and are recorded separately. Fix only small residual defects in reserved files; return larger ones to the owning task.",
+      "accept": [
+        "No document overflow, clipped critical text or unreachable primary/close action in the covered states.",
+        "Dialog focus/return, selected/disabled/error announcements and keyboard calendar/select behavior pass.",
+        "Long names, unavailable data, warnings and map overlays remain legible.",
+        "VoiceOver/TalkBack and native software-keyboard results are recorded separately when builds/devices are available; web checks do not close those gates."
+      ],
+      "verify": "Run browser accessibility/layout cases with measured viewport and screenshots; manual keyboard and screen-reader evidence. Native results depend on Q36/Q37 and devices.",
+      "old": "APP-07; QA-01",
+      "id": "Q38",
+      "status": "blocked",
+      "dependencies": [
+        "Q06",
+        "Q11",
+        "Q12",
+        "Q13",
+        "Q14",
+        "Q17",
+        "Q18",
+        "Q19",
+        "Q20",
+        "Q21",
+        "Q23",
+        "Q25",
+        "Q27",
+        "Q30",
+        "Q32",
+        "Q35"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q38.md",
+      "commit": "529d584",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "GPT-6.1 Sol / medium",
+      "blocker": "All five browser matrix cases pass. Native Dynamic Type/font scaling, software keyboard, VoiceOver/TalkBack and spoken accessibility evidence remain unavailable."
+    },
+    {
+      "n": 39,
+      "title": "Prove save and offline recovery end to end",
+      "priority": "P0",
+      "lane": "QA",
+      "tier": "Engineering",
+      "effort": "5–8 h",
+      "deps": [
+        6,
+        8,
+        9,
+        10,
+        11,
+        16,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "files": [
+        "apps/mobile/e2e/ (created by Q06)",
+        "scripts/web-offline.test.mjs",
+        "docs/validation/ (new recovery evidence)"
+      ],
+      "evidence": "Library/worker checks cover important internals, but there is no repeatable mounted failure journey spanning durable saves, map use and exported-shell recovery.",
+      "scope": "Exercise rejected writes/quota, restart, cancelled/interrupted downloads, expired evidence, disconnected reload and failed updates against the exported app.",
+      "accept": [
+        "Failed saves retain previous committed data and current editable drafts. Failed deletions truthfully report unchanged versus partial cleanup, prevent opening missing assets and recover through idempotent retry/reload.",
+        "Exported app reloads offline only after verified shell readiness; selected cached maps remain usable where actually downloaded.",
+        "Retained expired evidence keeps its original dates; newly fetched evidence is assessed on its own provenance. Pre-commit interruption preserves the previous complete pack. Interruption during commit resolves from the durable active pointer without rolling back a successful activation. A failed shell update retains the last complete verified shell.",
+        "Failures are deterministic test-only injections with no live provider dependency; native/offline claims remain separate."
+      ],
+      "verify": "Run exported service-worker browser suite with network actually disabled, plus storage fault cases and existing worker tests. Retain failure artifacts and exact build identity.",
+      "old": "QA-02; APP-05",
+      "id": "Q39",
+      "status": "done",
+      "dependencies": [
+        "Q06",
+        "Q08",
+        "Q09",
+        "Q10",
+        "Q11",
+        "Q16",
+        "Q24",
+        "Q25",
+        "Q26",
+        "Q27",
+        "Q28",
+        "Q29",
+        "Q30",
+        "Q31"
+      ],
+      "review": "Independent review of changed state, contracts and failure handling.",
+      "validation": "docs/validation/quality-q39.md",
+      "commit": "0d4cd61",
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review"
+    },
+    {
+      "n": 40,
+      "title": "Record integrated acceptance and remaining gaps",
+      "priority": "P0",
+      "lane": "Integration",
+      "tier": "Specialist",
+      "effort": "4–6 h + external acceptance",
+      "deps": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ],
+      "files": [
+        "docs/validation/ (new app-quality acceptance)",
+        "docs/release-checklist.md",
+        "docs/plans/2026-11-17-app-quality/manifest.json",
+        "README.md"
+      ],
+      "evidence": "The old task manifest is planning state; the current release checklist also retains historical dependency findings. A quality pass needs one current record of verified behavior and remaining gates.",
+      "scope": "Review the integrated changes, run final checks, reconcile task/evidence status and update current capability documentation. Preserve old historical reports and unresolved data/device/operational gates.",
+      "accept": [
+        "All 40 tasks have a truthful status, integration SHA/evidence or explicit blocker; no skipped acceptance is reported as passed.",
+        "Run npm run check, web export and the new journey/recovery suites against one candidate; record native build/device results separately.",
+        "Fresh walkthrough covers setup→search→details→plan→save→reload→offline and supported watch handoff, with no fabricated nautical evidence.",
+        "Public nautical release, reviewed equipment/data, native parity/overnight trials and maritime/on-water approval remain open until independently evidenced; document internal usability outcome separately.",
+        "Current release/dependency notes cite fresh evidence or explicitly dated history rather than repeating stale advisories as current."
+      ],
+      "verify": "Integrator reviews acceptance per task, runtime boundaries and changed files, runs integrated commands, records unresolved external gates. A blocked prerequisite permits a partial report, never full completion.",
+      "old": "QA-04; OPS-04 evidence follow-through",
+      "gate": "Native physical-device trials, native-engine parity and maritime/on-water approval require real external evidence; this plan does not supply that evidence.",
+      "id": "Q40",
+      "status": "blocked",
+      "dependencies": [
+        "Q01",
+        "Q02",
+        "Q03",
+        "Q04",
+        "Q05",
+        "Q06",
+        "Q07",
+        "Q08",
+        "Q09",
+        "Q10",
+        "Q11",
+        "Q12",
+        "Q13",
+        "Q14",
+        "Q15",
+        "Q16",
+        "Q17",
+        "Q18",
+        "Q19",
+        "Q20",
+        "Q21",
+        "Q22",
+        "Q23",
+        "Q24",
+        "Q25",
+        "Q26",
+        "Q27",
+        "Q28",
+        "Q29",
+        "Q30",
+        "Q31",
+        "Q32",
+        "Q33",
+        "Q34",
+        "Q35",
+        "Q36",
+        "Q37",
+        "Q38",
+        "Q39"
+      ],
+      "review": "Specialist review and actual external evidence where required.",
+      "validation": "docs/validation/quality-acceptance-2026-11-17.md",
+      "commit": null,
+      "localVerification": "passed; see task evidence and final acceptance",
+      "executionOwner": "Integrator with independent worker review",
+      "blocker": "Local acceptance report and reconciliation are complete; full acceptance remains blocked by native/device and external maritime/parity/overnight gates."
+    }
+  ],
+  "candidate": "0d4cd619770c7e90cb334930901c56ac82984990",
+  "productionImplementation": "f15be87",
+  "executionSummary": {
+    "locallyVerified": 34,
+    "blockedOnExternalAcceptance": 6,
+    "blockedTasks": [
+      "Q34",
+      "Q35",
+      "Q36",
+      "Q37",
+      "Q38",
+      "Q40"
+    ],
+    "productionCodeUnchangedAfter": "f15be87",
+    "publicNauticalReleaseApproved": false
+  },
+  "statusMeaning": "done records bounded source/local verification. Native hardware, spoken accessibility and external release evidence are never inferred; unresolved acceptance is recorded in blocked tasks and task evidence."
+}

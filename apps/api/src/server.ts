@@ -44,6 +44,12 @@ interface SearchBody {
   options?: SearchOptions;
 }
 
+const PACK_CONTENT_TYPES = new Set([
+  'application/geo+json',
+  'application/json',
+  'application/vnd.sqlite3',
+]);
+
 function optionsErrors(value: unknown): string[] {
   if (value === undefined) return [];
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -89,6 +95,7 @@ export function createApp(options: AppOptions = {}) {
       ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'body.token', 'body.apiKey'] }
       : false,
     bodyLimit: 256 * 1024,
+    requestTimeout: 30_000,
     logController: new LogController({ disableRequestLogging: true }),
   });
   const store = options.packStore ?? new FilePackStore(process.env.PACK_ROOT ?? './data/packs');
@@ -125,10 +132,16 @@ export function createApp(options: AppOptions = {}) {
       .filter(Boolean),
   );
   app.addHook('onRequest', async (request, reply) => {
+    reply.headers({
+      'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; sandbox",
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+      Vary: 'Origin',
+    });
     const origin = request.headers.origin;
     if (!origin) return;
     if (!allowedOrigins.has(origin)) return reply.code(403).send({ error: 'ORIGIN_NOT_ALLOWED' });
-    reply.header('Access-Control-Allow-Origin', origin).header('Vary', 'Origin');
+    reply.header('Access-Control-Allow-Origin', origin);
     if (request.method === 'OPTIONS') {
       const method = request.headers['access-control-request-method'];
       const headers = String(request.headers['access-control-request-headers'] ?? '')
@@ -243,6 +256,7 @@ export function createApp(options: AppOptions = {}) {
     const resource = await mapProxy.resource(request.query.url);
     return reply
       .header('Content-Type', resource.contentType)
+      .header('Content-Disposition', 'attachment')
       .header('Cache-Control', resource.cacheControl)
       .send(resource.bytes);
   });
@@ -267,7 +281,11 @@ export function createApp(options: AppOptions = {}) {
         request.params.name,
       );
       return reply
-        .header('Content-Type', asset.mediaType)
+        .header(
+          'Content-Type',
+          PACK_CONTENT_TYPES.has(asset.mediaType) ? asset.mediaType : 'application/octet-stream',
+        )
+        .header('Content-Disposition', 'attachment')
         .header('ETag', `"${asset.sha256}"`)
         .header('Cache-Control', 'public, max-age=31536000, immutable')
         .send(buffer);

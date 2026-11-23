@@ -377,3 +377,35 @@ test('closing details, changing tab, planning, watch and search closure clear de
   assert.equal(reduce(planned, { type: 'back' }).flow, 'base');
   assert.equal(reduce(detail, { type: 'changeView', view: 'list' }).view, 'list');
 });
+
+test('marking a draft saved never changes watch state and ignores stale plan instances', () => {
+  const candidate = {
+    id: 'pin',
+    name: 'Pin',
+    kind: 'generated' as const,
+    position: [10, 50] as [number, number],
+  };
+  const plan = { instance: 4, candidate, allowance: 20 as const, search };
+  const planned = reduce(reduce(initialWorkspace, { type: 'commitSearch', search }), {
+    type: 'openPlan',
+    plan,
+  });
+  const watch = reduce(planned, { type: 'showWatch', setup: { position: [10, 50], radius: 50 } });
+  const payload = {
+    name: 'Draft',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    selectedPosition: [10, 50] as [number, number],
+    search,
+    depthAllowancePercent: 20 as const,
+    vesselId: 'v',
+    vesselFingerprint: 'a'.repeat(64),
+    sourcePacks: [],
+  };
+  const stale = reduce(watch, { type: 'markPlanSaved', instance: 3, id: 'p', payload });
+  assert.equal(stale, watch);
+  const saved = reduce(watch, { type: 'markPlanSaved', instance: 4, id: 'p', payload });
+  assert.equal(saved.flow, 'watch');
+  assert.deepEqual(saved.watchSetup, watch.watchSetup);
+  assert.equal(saved.plan?.savedDraft?.id, 'p');
+});
