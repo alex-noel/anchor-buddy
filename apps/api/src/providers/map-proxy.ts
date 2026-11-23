@@ -1,6 +1,15 @@
 import { ProviderError, readBoundedBody } from './http.js';
 import { PROJECT_USER_AGENT } from './live-types.js';
 
+const MAP_CONTENT_TYPES = new Set([
+  'application/json',
+  'application/octet-stream',
+  'application/protobuf',
+  'application/vnd.mapbox-vector-tile',
+  'application/x-protobuf',
+  'image/png',
+]);
+
 /** Fixed provider only. It cannot proxy arbitrary URLs or forward client credentials. */
 export class OpenFreeMapProxy {
   private active = 0;
@@ -52,9 +61,19 @@ export class OpenFreeMapProxy {
           response.status,
         );
       }
+      const contentType =
+        response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ??
+        'application/octet-stream';
+      if (!MAP_CONTENT_TYPES.has(contentType)) {
+        await response.body?.cancel();
+        throw new ProviderError(
+          'INVALID_MAP_RESPONSE',
+          'Map provider returned an unsupported media type',
+        );
+      }
       return {
         bytes: Buffer.from(await readBoundedBody(response, 8 * 1024 * 1024)),
-        contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+        contentType,
         cacheControl: response.headers.get('cache-control') ?? 'public, max-age=3600',
       };
     } catch (error) {

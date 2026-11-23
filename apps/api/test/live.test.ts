@@ -315,7 +315,7 @@ test('map proxy rejects host tricks and credentials; handles encoded glyph space
   const proxy = new OpenFreeMapProxy((async (url, options) => {
     calls.push({ url: String(url), options });
     return new Response(new Uint8Array([1, 2, 3]), {
-      headers: { 'content-type': 'application/x-protobuf' },
+      headers: { 'content-type': 'Application/X-Protobuf; charset=UTF-8' },
     });
   }) as typeof fetch);
   for (const url of [
@@ -355,6 +355,35 @@ test('map proxy limits bodies and propagates rate limits', async () => {
     throttled.resource('https://tiles.openfreemap.org/a'),
     (error) => error instanceof ProviderError && error.status === 429,
   );
+});
+
+test('map resource route serves data downloads and rejects unsupported upstream media', async (t) => {
+  const app = createApp({
+    mapFetch: (async (url) =>
+      String(url).endsWith('/planet')
+        ? new Response('{"tiles":[]}', {
+            headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=60' },
+          })
+        : new Response('<p>Map resource unavailable</p>', {
+            headers: { 'content-type': 'text/html' },
+          })) as typeof fetch,
+  });
+  t.after(() => app.close());
+  const getMap = (path: string) =>
+    app.inject({
+      url: '/v1/maps/resource?url=' + encodeURIComponent('https://tiles.openfreemap.org' + path),
+      headers: { origin: 'http://localhost:8081' },
+    });
+  const metadata = await getMap('/planet');
+  assert.equal(metadata.statusCode, 200);
+  assert.deepEqual(metadata.json(), { tiles: [] });
+  assert.equal(metadata.headers['content-type'], 'application/json');
+  assert.equal(metadata.headers['cache-control'], 'public, max-age=60');
+  assert.equal(metadata.headers['content-disposition'], 'attachment');
+  assert.equal(metadata.headers['access-control-allow-origin'], 'http://localhost:8081');
+  const unsupported = await getMap('/styles/liberty');
+  assert.equal(unsupported.statusCode, 502);
+  assert.equal(unsupported.json().error, 'INVALID_MAP_RESPONSE');
 });
 
 test('live API routes support discovery and current-time assessment with strict CORS', async (t) => {

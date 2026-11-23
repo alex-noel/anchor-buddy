@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { FilePackStore, type PackManifest } from '../src/packs.js';
+import { createApp } from '../src/server.js';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'anchorbuddy-api-'));
@@ -65,6 +66,34 @@ test('pack store returns immutable checked assets and rejects tampering', async 
   );
   await writeFile(join(directory, 'assessment.json'), '{"test":fals}');
   await assert.rejects(store.asset('keys', 'v1', 'assessment.json'), /checksum|size/);
+});
+
+test('pack downloads preserve checksums and caching for known and unrecognized media types', async (t) => {
+  const { root, directory, manifest, store } = await fixture();
+  const app = createApp({ packStore: store });
+  t.after(async () => {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const asset = manifest.assets[0]!;
+  manifest.assets.push({ ...asset, path: 'preview.html', mediaType: 'text/html' });
+  await Promise.all([
+    writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest)),
+    writeFile(join(directory, 'preview.html'), '{"test":true}'),
+  ]);
+
+  for (const [path, contentType] of [
+    [asset.path, 'application/json'],
+    ['preview.html', 'application/octet-stream'],
+  ]) {
+    const download = await app.inject('/v1/regions/keys/v1/assets/' + path);
+    assert.equal(download.statusCode, 200);
+    assert.equal(download.body, '{"test":true}');
+    assert.equal(download.headers['content-type'], contentType);
+    assert.equal(download.headers['content-disposition'], 'attachment');
+    assert.equal(download.headers.etag, `"${asset.sha256}"`);
+    assert.equal(download.headers['cache-control'], 'public, max-age=31536000, immutable');
+  }
 });
 
 test('synthetic manifests, mixed provenance and synthetic assessment attachments are never listed or served', async (t) => {

@@ -9,7 +9,7 @@ import re
 import stat
 import time
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -17,14 +17,29 @@ CATALOG_URL = "https://charts.noaa.gov/ENCs/FL_ENCProdCat_19115.xml"
 NOAA_HOSTS = {"charts.noaa.gov", "www.charts.noaa.gov", "distribution.charts.noaa.gov"}
 
 
-def fetch_bytes(url: str, *, allowed_hosts: set[str], limit: int = 100_000_000) -> bytes:
+def _is_allowed_source(url: str, allowed_hosts: set[str]) -> bool:
     parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in allowed_hosts or parsed.username or parsed.password:
+    return (parsed.scheme == "https" and parsed.hostname in allowed_hosts
+            and parsed.username is None and parsed.password is None)
+
+
+class _ProviderRedirectHandler(HTTPRedirectHandler):
+    def __init__(self, allowed_hosts: set[str]):
+        self.allowed_hosts = allowed_hosts
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_allowed_source(newurl, self.allowed_hosts):
+            fp.close()
+            raise ValueError("Source redirect escaped provider allowlist")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def fetch_bytes(url: str, *, allowed_hosts: set[str], limit: int = 100_000_000) -> bytes:
+    if not _is_allowed_source(url, allowed_hosts):
         raise ValueError("Source URL is outside the HTTPS provider allowlist")
     request = Request(url, headers={"User-Agent": "Anchor Buddy-ingest/0.1 (operator configured source collection)", "Accept": "*/*"})
-    with urlopen(request, timeout=30) as response:
-        if urlparse(response.url).hostname not in allowed_hosts or urlparse(response.url).scheme != "https":
-            raise ValueError("Source redirect escaped provider allowlist")
+    opener = build_opener(_ProviderRedirectHandler(allowed_hosts))
+    with opener.open(request, timeout=30) as response:
         if int(response.headers.get("Content-Length", "0")) > limit:
             raise ValueError("Source exceeds download limit")
         content = response.read(limit + 1)
@@ -48,8 +63,7 @@ def parse_catalog(content: bytes) -> list[dict]:
         if not names or not urls:
             continue
         url = urls[0]
-        parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.hostname not in NOAA_HOSTS or parsed.username or parsed.password:
+        if not _is_allowed_source(url, NOAA_HOSTS):
             continue
         bounds = {}
         for item in metadata.iter():

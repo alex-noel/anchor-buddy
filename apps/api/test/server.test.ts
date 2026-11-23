@@ -178,6 +178,15 @@ test('catalogue and search expose no built-in demo or synthetic source pack', as
 test('development CORS accepts only configured origins, methods and headers', async (t) => {
   const app = createApp();
   t.after(() => app.close());
+  assert.equal(app.server.requestTimeout, 30_000);
+  const originless = await app.inject('/v1/regions');
+  assert.equal(originless.headers.vary, 'Origin');
+  assert.equal(originless.headers['x-content-type-options'], 'nosniff');
+  assert.equal(originless.headers['referrer-policy'], 'no-referrer');
+  assert.equal(
+    originless.headers['content-security-policy'],
+    "default-src 'none'; frame-ancestors 'none'; sandbox",
+  );
   const permitted = await app.inject({
     url: '/v1/regions',
     headers: { origin: 'http://localhost:8081' },
@@ -185,11 +194,13 @@ test('development CORS accepts only configured origins, methods and headers', as
   assert.equal(permitted.statusCode, 200);
   assert.equal(permitted.headers['access-control-allow-origin'], 'http://localhost:8081');
   assert.equal(permitted.headers['access-control-allow-credentials'], undefined);
-  assert.equal(
-    (await app.inject({ url: '/v1/regions', headers: { origin: 'https://untrusted.example' } }))
-      .statusCode,
-    403,
-  );
+  const denied = await app.inject({
+    url: '/v1/regions',
+    headers: { origin: 'https://untrusted.example' },
+  });
+  assert.equal(denied.statusCode, 403);
+  assert.equal(denied.headers.vary, 'Origin');
+  assert.equal(denied.headers['access-control-allow-origin'], undefined);
   const preflight = await app.inject({
     method: 'OPTIONS',
     url: '/v1/search',
